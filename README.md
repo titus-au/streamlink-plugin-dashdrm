@@ -24,11 +24,11 @@ The plugin accepts a number of optional parameters:
     <TH>Description</TH>
   </TR>
   <TR>
-    <TD>--dashdrm-decryption-key <key in hex></TD>
+    <TD>--dashdrm-decryption-key &ltkey in hex&gt</TD>
     <TD>This is the decryption key to be passed to ffmpeg</TD>
   </TR>
   <TR>
-    <TD>--dashdrm-presentation-delay <delay in seconds></TD>
+    <TD>--dashdrm-presentation-delay &ltdelay in seconds&gt</TD>
     <TD>Override the presentation delay defaults, similar to hls-live-edge</TD>
   </TR>
   <TR>
