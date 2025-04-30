@@ -1,0 +1,488 @@
+from __future__ import annotations
+
+import re
+import itertools
+import logging
+from collections import defaultdict
+from contextlib import suppress
+from typing import List, Self
+from datetime import timedelta
+
+from streamlink.exceptions import PluginError
+from streamlink.plugin import Plugin, pluginmatcher, pluginargument
+from streamlink.plugin.plugin import HIGH_PRIORITY, parse_params, stream_weight
+from streamlink.stream.dash import DASHStream, DASHStreamWorker, DASHStreamWriter, DASHStreamReader
+from streamlink.stream.dash.manifest import MPD, Representation
+from streamlink.stream.ffmpegmux import FFMPEGMuxer
+from streamlink.utils.url import update_scheme
+from streamlink.session import Streamlink
+from streamlink.utils.l10n import Language
+from streamlink.utils.times import now
+
+log = logging.getLogger(__name__)
+
+DASHDRM_OPTIONS = [
+    "decryption-key",
+    "presentation-delay",
+    "last-period",
+    "use-subtitles",
+]
+
+@pluginmatcher(
+    priority=HIGH_PRIORITY,
+    pattern=re.compile(r"dashdrm://(?P<url>\S+)(?:\s(?P<params>.+))?$"),
+)
+@pluginargument(
+    "decryption-key",
+    help="Decryption key to be passed to ffmpeg."
+)
+@pluginargument(
+    "presentation-delay",
+    help="Override presentation delay value (in seconds). Similar to"
+    " --hls-live-edge."
+)
+@pluginargument(
+    "last-period",
+    action="store_true",
+    help="Start from the last period of the mpd instead of the first, useful"
+    " for skipping pre-rolls."
+)
+@pluginargument(
+    "use-subtitles",
+    action="store_true",
+    help="Experiment with subtitles."
+)
+
+class MPEGDASHDRM(Plugin):
+    @classmethod
+    def stream_weight(cls, stream):
+        match = re.match(r"^(?:(.*)\+)?(?:a(\d+)k)$", stream)
+        if match and match.group(1) and match.group(2):
+            weight, group = stream_weight(match.group(1))
+            weight += int(match.group(2))
+            return weight, group
+        elif match and match.group(2):
+            return stream_weight(f"{match.group(2)}k")
+        else:
+            return stream_weight(stream)
+
+    def _get_streams(self):
+        data = self.match.groupdict()
+        url = update_scheme("https://", data.get("url"), force=False)
+        params = parse_params(data.get("params"))
+        log.debug(f"URL={url}; params={params}")
+
+        # process and store plugin options before passing streams back
+        for option in DASHDRM_OPTIONS:
+            self.session.options[option] = self.get_option(option)
+
+        if self.session.options["last-period"]:
+            period = -1
+        else:
+            period = 0
+
+        return DASHStreamDRM.parse_manifest(self.session,
+                                            url,
+                                            period,
+                                            **params)
+
+
+class FFMPEGMuxerDRM(FFMPEGMuxer):
+    '''
+    Inherit and extend the FFMPEGMuxer class to pass decryption keys
+    to ffmpeg
+    '''
+    def __init__(self, session, *streams, **options):
+        super().__init__(session, *streams, **options)
+        # if a decryption key is set, we rebuild the ffmpeg command list
+        # to include the key before specifying the input stream
+        if self.session.options.get("decryption-key"):
+            key = self.session.options.get("decryption-key")
+            # Build new ffmpeg command list
+            old_cmd = self._cmd.copy()
+            self._cmd = []
+            while len(old_cmd) > 0:
+                cmd = old_cmd.pop(0)
+                if cmd == "-i":
+                    _ = old_cmd.pop(0)
+                    self._cmd.extend(["-decryption_key", key, cmd, _])
+                    self._cmd.extend(['-thread_queue_size', '4096'])
+                elif cmd == "-c:a":
+                    _ = old_cmd.pop(0)
+                    self._cmd.extend([cmd, _])
+                    self._cmd.extend(["-c:s", "copy"])
+                else:
+                    self._cmd.append(cmd)
+            log.debug("Updated ffmpeg command %s", self._cmd)
+
+
+
+class DASHStreamWriterDRM(DASHStreamWriter):
+    reader: DASHStreamReaderDRM
+    stream: DASHStreamDRM
+
+
+class DASHStreamWorkerDRM(DASHStreamWorker):
+    reader: DASHStreamReaderDRM
+    writer: DASHStreamWriterDRM
+    stream: DASHStreamDRM
+
+    def next_period_available(self):
+        '''
+        Check whether there are any more periods in the overall list of periods
+        beyond the current period id. If so, return the index for the next period
+        otherwise return 0
+        '''
+        period_id = self.reader.ident[0]
+        current_period_ids = [ p.id for p in self.mpd.periods ]
+        current_period_idx = current_period_ids.index(period_id)
+
+        log.debug("Current playing period: %s", current_period_idx + 1)
+        log.debug("Number of periods: %s", len(current_period_ids))
+
+        if len(current_period_ids) > current_period_idx + 1:
+            return current_period_idx + 1
+        return 0
+
+    def check_new_rep(self):
+        '''
+        Check if new representation is available, if so find the matching stream
+        name and return with the new rep's stream object
+        '''
+        new_rep = None
+        log.debug("Checking for new representations")
+        next_period = self.next_period_available()
+        if next_period:
+            # reparse manifest to find the next stream
+            reloaded_streams = DASHStreamDRM.parse_manifest(self.session, 
+                                                        self.mpd.url,
+                                                        next_period)
+            reload_stream = reloaded_streams[self.stream.stream_name]
+            if self.reader.mime_type == "video/mp4":
+                new_rep = reload_stream.video_representation
+                log.debug("New video representation found!")
+            elif self.reader.mime_type == "audio/mp4":
+                new_rep = reload_stream.audio_representation
+                log.debug("New audio representation found!")
+            else:
+                log.debug("No new representation found!")
+        return new_rep
+
+    def iter_segments(self):
+        '''
+        This is copy of iter_segments, but with DRM checks disabled,
+        and slight change to limit max amount of time to wait before
+        looking for segments
+        '''
+        init = True
+        back_off_factor = 1
+        new_rep = None
+        yield_count = -1
+        while not self.closed:
+            # find the representation by ID
+            representation = self.mpd.get_representation(self.reader.ident)
+
+            # check if a new representation is available
+            if not new_rep:
+                new_rep = self.check_new_rep()
+
+            if self.mpd.type == "static":
+                refresh_wait = 5
+            else:
+                refresh_wait = (
+                    max(
+                        self.mpd.minimumUpdatePeriod.total_seconds(),
+                        # dont take the whole rep duration as wait time
+                        # as some mpd will set a large number. we then
+                        # end up staying in the sleeper loop too long
+                        # and ffmpeg will timeout
+                        min(representation.period.duration.total_seconds(),5)
+                        if representation else 0,
+                    )
+                    or 5
+                )
+
+            if new_rep and not yield_count:
+                # New rep available and no yield so we swap to the new one
+                self.reader.ident = new_rep.ident
+                representation = new_rep
+                new_rep = None
+            elif new_rep and yield_count:
+                # New rep available but we had yield so we dont swap yet.
+                # Set refresh to be very low since we know we actually have
+                # new content in the from of new_rep
+                refresh_wait = 1
+
+            with self.sleeper(refresh_wait * back_off_factor):
+                if not representation:
+                    continue
+
+                iter_segments = representation.segments(
+                    init=init,
+                    # sync initial timeline generation between audio and video threads
+                    timestamp=self.reader.timestamp if init else None,
+                )
+                yield_count = 0
+                for segment in iter_segments:
+                    if self.closed:
+                        break
+                    yield_count += 1
+                    yield segment
+
+                # close worker if type is not dynamic (all segments were put into writer queue)
+                if self.mpd.type != "dynamic":
+                    self.close()
+                    return
+
+                if not self.reload():
+                    back_off_factor = max(back_off_factor * 1.3, 10.0)
+                else:
+                    back_off_factor = 1
+
+                init = False
+
+
+class DASHStreamReaderDRM(DASHStreamReader):
+    __worker__ = DASHStreamWorkerDRM
+    __writer__ = DASHStreamWriterDRM
+
+    worker: DASHStreamWorkerDRM
+    writer: DASHStreamWriterDRM
+    stream: DASHStreamDRM
+
+
+class DASHStreamReaderSUB(DASHStreamReader):
+    __worker__ = DASHStreamWorkerDRM
+    __writer__ = DASHStreamWriterDRM
+
+    worker: DASHStreamWorkerDRM
+    writer: DASHStreamWriterDRM
+    stream: DASHStreamDRM
+
+    def read(self, size: int) -> bytes:
+        _ = self.buffer.read(
+            size,
+            block=self.writer.is_alive(),
+            timeout=self.timeout,
+        )
+        log.debug("Subtitle stream segment: %s", _)
+        return _
+
+class DASHStreamDRM(DASHStream):
+    """
+    Implementation of the "Dynamic Adaptive Streaming over HTTP" protocol (MPEG-DASH)
+    """
+    def __init__(
+        self,
+        session: Streamlink,
+        mpd: MPD,
+        video_representation: Representation | None = None,
+        audio_representations: List[Representation] | None = None,
+        subtitles_representations: List[Representation] | None = None,
+        **kwargs,
+    ):
+        super().__init__(
+            session,
+            mpd,
+            video_representation,
+            audio_representations[0] if audio_representations[0] else None,
+            **kwargs,
+        )
+        self.audio_representations = audio_representations
+        self.subtitles_representations = subtitles_representations
+
+    __shortname__ = "dashdrm"
+
+    @classmethod
+    def parse_manifest(
+        cls,
+        session: Streamlink,
+        url_or_manifest: str,
+        period: int = 0, 
+        with_video_only: bool = False,
+        with_audio_only: bool = False,
+        **kwargs,
+    ) -> dict[str, Self]:
+        """
+        Parse a DASH manifest file and return its streams.
+
+        :param session: Streamlink session instance
+        :param url_or_manifest: URL of the manifest file or an XML manifest string
+        :param period: Which MPD period to use (index number) for finding representations
+        :param with_video_only: Also return video-only streams, otherwise only return muxed streams
+        :param with_audio_only: Also return audio-only streams, otherwise only return muxed streams
+        :param kwargs: Additional keyword arguments passed to :meth:`requests.Session.request`
+        """
+
+        manifest, mpd_params = cls.fetch_manifest(session, url_or_manifest, **kwargs)
+
+        try:
+            mpd = cls.parse_mpd(manifest, mpd_params)
+        except Exception as err:
+            raise PluginError(f"Failed to parse MPD manifest: {err}") from err
+
+        if session.options.get("presentation-delay"):
+            presentation_delay = session.options.get("presentation-delay")
+            mpd.suggestedPresentationDelay = timedelta(
+                                                seconds=int(presentation_delay)
+                                                )
+
+        source = mpd_params.get("url", "MPD manifest")
+        video: list[Representation | None] = [None] if with_audio_only else []
+        audio: list[Representation | None] = [None] if with_video_only else []
+        subtitles: list[Representation | None] = [None] if with_audio_only else []
+
+        # Search for suitable video and audio representations
+        for aset in mpd.periods[period].adaptationSets:
+            if aset.contentProtections:
+                log.debug(f"{source} is protected by DRM")
+                #raise PluginError(f"{source} is protected by DRM")
+            for rep in aset.representations:
+                if rep.contentProtections:
+                    log.debug(f"{source} is protected by DRM")
+                    #raise PluginError(f"{source} is protected by DRM")
+                if rep.mimeType.startswith("video"):
+                    video.append(rep)
+                elif rep.mimeType.startswith("audio"):  # pragma: no branch
+                    audio.append(rep)
+                elif (session.options.get("use-subtitles") and
+                        rep.mimeType.startswith("application")):
+                    subtitles.append(rep)
+
+        if not video:
+            video.append(None)
+        if not audio:
+            audio.append(None)
+        if not subtitles:
+            subtitles.append(None)
+
+        locale = session.localization
+        locale_lang = locale.language
+        lang = None
+        available_languages = set()
+
+        # if the locale is explicitly set, prefer that language over others
+        for aud in audio:
+            if aud and aud.lang:
+                available_languages.add(aud.lang)
+                with suppress(LookupError):
+                    if locale.explicit and aud.lang and Language.get(aud.lang) == locale_lang:
+                        lang = aud.lang
+
+        if not lang:
+            # filter by the first language that appears
+            lang = audio[0].lang if audio[0] else None
+
+        log.debug(
+            f"Available languages for DASH audio streams: {', '.join(available_languages) or 'NONE'} (using: {lang or 'n/a'})",
+        )
+
+        # if the language is given by the stream, filter out other languages that do not match
+        #if len(available_languages) > 1:
+        #    audio = [a for a in audio if a and (a.lang is None or a.lang == lang)]
+
+        ret = []
+        for vid, aud in itertools.product(video, audio):
+            if not vid and not aud:
+                continue
+
+            stream = DASHStreamDRM(session, mpd, vid, audio, subtitles, **kwargs)
+            stream_name = []
+
+            if vid:
+                stream_name.append(f"{vid.height or vid.bandwidth_rounded:0.0f}{'p' if vid.height else 'k'}")
+            #if aud and len(audio) > 1:
+            #    stream_name.append(f"a{aud.bandwidth:0.0f}k")
+            ret.append(("+".join(stream_name), stream))
+
+        # rename duplicate streams
+        dict_value_list = defaultdict(list)
+        for k, v in ret:
+            dict_value_list[k].append(v)
+
+        def sortby_bandwidth(dash_stream: DASHStreamDRM) -> float:
+            if dash_stream.video_representation:
+                return dash_stream.video_representation.bandwidth
+            #if dash_stream.audio_representation:
+            #    return dash_stream.audio_representation.bandwidth
+            return 0  # pragma: no cover
+
+        ret_new = {}
+        for q in dict_value_list:
+            items = dict_value_list[q]
+
+            with suppress(AttributeError):
+                items = sorted(items, key=sortby_bandwidth, reverse=True)
+
+            for n in range(len(items)):
+                if n == 0:
+                    ret_new[q] = items[n]
+                elif n == 1:
+                    ret_new[f"{q}_alt"] = items[n]
+                else:
+                    ret_new[f"{q}_alt{n}"] = items[n]
+
+        # add stream_name to the returned streams so we can find it again
+        for stream_name in ret_new:
+            ret_new[stream_name].stream_name = stream_name
+
+        return ret_new
+
+    def open(self):
+        video, audio, audio1 = None, None, None
+        rep_video = self.video_representation
+        rep_audios = self.audio_representations
+        rep_subtitles = self.subtitles_representations
+
+        timestamp = now()
+
+        fds = []
+
+        maps = ["0:v?", "0:a?"]
+        metadata = {}
+
+        if rep_video:
+            video = DASHStreamReaderDRM(self, rep_video, timestamp)
+            log.debug(f"Opening DASH reader for: {rep_video.ident!r} - {rep_video.mimeType}")
+            video.open()
+            fds.append(video)
+
+            
+        #if rep_audio:
+        #    audio = DASHStreamReaderDRM(self, rep_audio, timestamp)
+        #    log.debug(f"Opening DASH reader for: {rep_audio.ident!r} - {rep_audio.mimeType}")
+
+        next_map = 1
+        if rep_audios:
+            for i, rep_audio in enumerate(rep_audios):
+                audio = DASHStreamReaderDRM(self, rep_audio, timestamp)
+                if not audio1:
+                    audio1 = audio
+                log.debug(f"Opening DASH reader for: {rep_audio.ident!r} - {rep_audio.mimeType}")
+                audio.open()
+                fds.append(audio)
+                metadata["s:a:{0}".format(i)] = ["language={0}".format(rep_audio.lang), "title=\"{0}\"".format(rep_audio.lang)]
+            maps.extend(f"{i}:a" for i in range(next_map, next_map + len(rep_audios)))
+            next_map = len(rep_audios) + 1
+
+        # only do subtitles if we have video
+        if rep_subtitles and rep_subtitles[0] and rep_video:
+            for _, rep_subtitle in enumerate(rep_subtitles):
+                #if not rep_subtitle:
+                    #break
+                subtitle = DASHStreamReaderSUB(self, rep_subtitle, timestamp)
+                log.debug(f"Opening DASH reader for: {rep_subtitle.ident!r} - {rep_subtitle.mimeType}")
+                subtitle.open()
+                fds.append(subtitle)
+                metadata["s:s:{0}".format(_)] = ["language={0}".format(rep_subtitle.lang), "title=\"{0}\"".format(rep_subtitle.lang)]
+            maps.extend(f"{_}:s" for _ in range(next_map, next_map + len(rep_subtitles)))
+
+        if video and audio and FFMPEGMuxerDRM.is_usable(self.session):
+            return FFMPEGMuxerDRM(self.session, *fds, copyts=True, maps=maps, metadata=metadata).open()
+        elif video:
+            return video
+        elif audio:
+            return audio1
+
+
+__plugin__ = MPEGDASHDRM
