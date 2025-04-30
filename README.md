@@ -2,7 +2,7 @@
 
 A streamlink plugin that extends the standard streamlink dash plugin to support DRM based MPDs, as well as multi audio and multi period support.
 
-This is a reimplementation of [streamlink-drm](https://github.com/ImAleeexx/streamlink-drm) as a plugin, so the latest streamlink based code can be used. In addition to DRM support, the plugin also reimplement the multiple audio fork done by [Shea Smith](https://github.com/SheaSmith/streamlink-drm). Lastly the plugin also implements multi period support. Note that the [caveats](https://github.com/streamlink/streamlink/issues/5058) around periods with differing video specifications likely causing video players to not play properly still applies, so YMMV. Lastly, the plugin currently contains code to also include subtitle streams, however ffmpeg has no support for TTML decoding at this stage, so any TTML/STPP based subtitles will not be recognised by the player even if it is included.
+This is a reimplementation of [streamlink-drm](https://github.com/ImAleeexx/streamlink-drm) as a plugin, so the latest streamlink base code can be used. In addition to DRM support, the plugin also reimplement the multiple audio fork done by [Shea Smith](https://github.com/SheaSmith/streamlink-drm). Lastly the plugin also implements multi period support. Note that the [caveats](https://github.com/streamlink/streamlink/issues/5058) around periods with differing video specifications likely causing video players to not play properly still applies, so YMMV. Lastly, the plugin currently contains code to also include subtitle streams, however ffmpeg has no support for TTML decoding at this stage, so any TTML/STPP based subtitles will not be recognised by the player even if it is included.
 
 # Install and Use
 
