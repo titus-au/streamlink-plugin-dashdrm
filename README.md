@@ -45,4 +45,4 @@ The plugin accepts a number of optional parameters:
 
 <LI>Use of this code to decrypt DRM is purely for academic purposes. You should not use this code for any illegal purposes and I take no responsibility for your actions</LI>
 <LI>This code has not been widely tested, so consider it alpha software</LI>
-#
+
