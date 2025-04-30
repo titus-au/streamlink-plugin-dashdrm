@@ -4,7 +4,7 @@ A streamlink plugin that extends the standard [streamlink](https://github.com/st
 
 This is a reimplementation of [streamlink-drm](https://github.com/ImAleeexx/streamlink-drm) as a plugin, so the latest streamlink base code can be used. In addition to DRM support, the plugin also reimplement the multiple audio fork done by [Shea Smith](https://github.com/SheaSmith/streamlink-drm). 
 
-In addition, the plugin also implements multi period support. Note that the [caveats](https://github.com/streamlink/streamlink/issues/5058) around periods with differing video specifications likely causing video players to not play properly still applies, so YMMV. Lastly, the plugin currently contains code to also include subtitle streams, however ffmpeg has no support for TTML decoding at this stage, so any TTML/STPP based subtitles will not be recognised by the player even if it is included.
+In addition, the plugin also implements multi period support. Note that the [caveats](https://github.com/streamlink/streamlink/issues/5058) around periods still applies, such as differing video specifications likely causing video players to not play properly, or when switching to a new period too quickly thus cutting off the previous period, so YMMV. Lastly, the plugin currently contains code to also include subtitle streams, however ffmpeg has no support for TTML decoding at this stage, so any TTML/STPP based subtitles will not be recognised by the player even if it is included.
 
 # Install and Use
 
