@@ -12,7 +12,7 @@ To use this plugin, you need to utilise streamlink's plugin [sideload](https://s
 
 To make use of the plugin, add dashdrm:// in front of the url.
 ```sh
-Eg: streamlink --url dashdrm://http://abc.def/xyz.mpd
+Eg: streamlink --plugin-dir /path/to/dashdrm/plugin --url dashdrm://http://abc.def/xyz.mpd
 ```
 
 # Parameters
