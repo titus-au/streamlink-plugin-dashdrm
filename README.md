@@ -32,10 +32,6 @@ The plugin accepts a number of optional parameters:
     <TD>Override the presentation delay defaults, similar to hls-live-edge</TD>
   </TR>
   <TR>
-    <TD>--dashdrm-last-period</TD>
-    <TD>Jump straight to the last period, useful to skip pre-rolls</TD>
-  </TR>
-  <TR>
     <TD>--dashdrm-use-subtitles</TD>
     <TD>Mux in subtitle tracks that are found, however ffmpeg currently does not support TTML/STPP</TD>
   </TR>
