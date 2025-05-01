@@ -12,7 +12,11 @@ To use this plugin, you need to utilise streamlink's plugin [sideload](https://s
 
 To make use of the plugin, add dashdrm:// in front of the url.
 ```sh
-Eg: streamlink --plugin-dir /path/to/dashdrm/plugin --url dashdrm://http://abc.def/xyz.mpd best
+streamlink --plugin-dir /path/to/dashdrm/plugin --default-stream best --url dashdrm://http://abc.def/xyz.mpd
+```
+Multi period support is enabled automatically, however if you wish to jump straight to the current last period, you can do:
+```sh
+streamlink --plugin-dir /path/to/dashdrm/plugin --default-stream best --url dashdrm://http://abc.def/xyz.mpd period=-1
 ```
 
 # Parameters
