@@ -24,7 +24,6 @@ log = logging.getLogger(__name__)
 DASHDRM_OPTIONS = [
     "decryption-key",
     "presentation-delay",
-    "last-period",
     "use-subtitles",
 ]
 
@@ -40,12 +39,6 @@ DASHDRM_OPTIONS = [
     "presentation-delay",
     help="Override presentation delay value (in seconds). Similar to"
     " --hls-live-edge."
-)
-@pluginargument(
-    "last-period",
-    action="store_true",
-    help="Start from the last period of the mpd instead of the first, useful"
-    " for skipping pre-rolls."
 )
 @pluginargument(
     "use-subtitles",
@@ -76,14 +69,8 @@ class MPEGDASHDRM(Plugin):
         for option in DASHDRM_OPTIONS:
             self.session.options[option] = self.get_option(option)
 
-        if self.session.options["last-period"]:
-            period = -1
-        else:
-            period = 0
-
         return DASHStreamDRM.parse_manifest(self.session,
                                             url,
-                                            period,
                                             **params)
 
 
