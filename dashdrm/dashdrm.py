@@ -33,6 +33,7 @@ DASHDRM_OPTIONS = [
 )
 @pluginargument(
     "decryption-key",
+    type="comma_list",
     help="Decryption key to be passed to ffmpeg."
 )
 @pluginargument(
@@ -78,13 +79,38 @@ class FFMPEGMuxerDRM(FFMPEGMuxer):
     '''
     Inherit and extend the FFMPEGMuxer class to pass decryption keys
     to ffmpeg
+
+    We build a list of keys to use based on the value of command line option
+    --dashdrm-decryption-keys. If only 1 key is given, it's used for
+    all streams. If more than 1 key is given, the first key is used for
+    video, and the remaining keys used for remaining streams. If the number
+    of keys given is less than the number of streams, keys are looped
+    starting from the first key after the video key. This will basically
+    mean if you have a key for video, and a key for the rest of the streams
+    you just need to specify 2 keys, but alternatively you can provide a
+    different key for every single stream if needed
     '''
+
+    @classmethod
+    def _get_keys(cls, session):
+        keys=[]
+        if session.options.get("decryption-key"):
+            keys = session.options.get("decryption-key")
+            # If only 1 key is given, then we use that also for all remaining
+            # streams
+            if len(keys) == 1:
+                keys.extend(keys)
+        log.debug('Decryption Keys %s', keys)
+        return keys
+
     def __init__(self, session, *streams, **options):
         super().__init__(session, *streams, **options)
         # if a decryption key is set, we rebuild the ffmpeg command list
         # to include the key before specifying the input stream
-        if self.session.options.get("decryption-key"):
-            key = self.session.options.get("decryption-key")
+        keys = self._get_keys(session)
+        if keys:
+            key = 0
+            #key = self.session.options.get("decryption-key")
             # Build new ffmpeg command list
             old_cmd = self._cmd.copy()
             self._cmd = []
@@ -92,7 +118,13 @@ class FFMPEGMuxerDRM(FFMPEGMuxer):
                 cmd = old_cmd.pop(0)
                 if cmd == "-i":
                     _ = old_cmd.pop(0)
-                    self._cmd.extend(["-decryption_key", key, cmd, _])
+                    self._cmd.extend(["-decryption_key", keys[key]])
+                    key += 1
+                    # If we had more streams than keys, start with the first
+                    # audio key again
+                    if key == len(keys):
+                        key = 1
+                    self._cmd.extend([cmd, _])
                     self._cmd.extend(['-thread_queue_size', '4096'])
                 elif cmd == "-c:a":
                     _ = old_cmd.pop(0)
