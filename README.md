@@ -29,7 +29,7 @@ The plugin accepts a number of optional parameters:
   </TR>
   <TR>
     <TD>--dashdrm-decryption-key &ltkey in hex&gt</TD>
-    <TD>This is the decryption key to be passed to ffmpeg</TD>
+    <TD>This is a comman seperated list of decryption keys to be passed to ffmpeg. If only one key is given, then all streams will use this key. If 2 keys are given, then the video stream will use the first key, and all remaining streams (eg audio streams) will use the second key. If more than 2 keys are given, then the video stream will use the first key, and the second stream will use the second key, the third stream will use the third key etc. If more streams than keys are given, keys will be looped starting with the second key</TD>
   </TR>
   <TR>
     <TD>--dashdrm-presentation-delay &ltdelay in seconds&gt</TD>
