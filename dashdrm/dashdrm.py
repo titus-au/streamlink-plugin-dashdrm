@@ -108,31 +108,30 @@ class FFMPEGMuxerDRM(FFMPEGMuxer):
         # if a decryption key is set, we rebuild the ffmpeg command list
         # to include the key before specifying the input stream
         keys = self._get_keys(session)
-        if keys:
-            key = 0
-            #key = self.session.options.get("decryption-key")
-            # Build new ffmpeg command list
-            old_cmd = self._cmd.copy()
-            self._cmd = []
-            while len(old_cmd) > 0:
-                cmd = old_cmd.pop(0)
-                if cmd == "-i":
-                    _ = old_cmd.pop(0)
-                    self._cmd.extend(["-decryption_key", keys[key]])
-                    key += 1
-                    # If we had more streams than keys, start with the first
-                    # audio key again
-                    if key == len(keys):
-                        key = 1
-                    self._cmd.extend([cmd, _])
-                    self._cmd.extend(['-thread_queue_size', '4096'])
-                elif cmd == "-c:a":
-                    _ = old_cmd.pop(0)
-                    self._cmd.extend([cmd, _])
-                    self._cmd.extend(["-c:s", "copy"])
-                else:
-                    self._cmd.append(cmd)
-            log.debug("Updated ffmpeg command %s", self._cmd)
+        key = 0
+        subtitles = self.session.options.get("use-subtitles")
+        # Build new ffmpeg command list
+        old_cmd = self._cmd.copy()
+        self._cmd = []
+        while len(old_cmd) > 0:
+            cmd = old_cmd.pop(0)
+            if keys and cmd == "-i":
+                _ = old_cmd.pop(0)
+                self._cmd.extend(["-decryption_key", keys[key]])
+                key += 1
+                # If we had more streams than keys, start with the first
+                # audio key again
+                if key == len(keys):
+                    key = 1
+                self._cmd.extend([cmd, _])
+                self._cmd.extend(['-thread_queue_size', '4096'])
+            elif subtitles and cmd == "-c:a":
+                _ = old_cmd.pop(0)
+                self._cmd.extend([cmd, _])
+                self._cmd.extend(["-c:s", "copy"])
+            else:
+                self._cmd.append(cmd)
+        log.debug("Updated ffmpeg command %s", self._cmd)
 
 
 
