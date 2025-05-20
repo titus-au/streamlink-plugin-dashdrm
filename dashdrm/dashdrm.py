@@ -92,6 +92,16 @@ class FFMPEGMuxerDRM(FFMPEGMuxer):
     '''
 
     @classmethod
+    def _split_key(cls, keys):
+        # if a colon separated key is given, assume its kid:key and take the
+        # last component after the colon
+        return_key = []
+        for k in keys:
+            key = k.split(':')
+            return_key.append(key[-1])
+        return return_key
+
+    @classmethod
     def _get_keys(cls, session):
         keys=[]
         if session.options.get("decryption-key"):
@@ -101,7 +111,7 @@ class FFMPEGMuxerDRM(FFMPEGMuxer):
             if len(keys) == 1:
                 keys.extend(keys)
         log.debug('Decryption Keys %s', keys)
-        return keys
+        return FFMPEGMuxerDRM._split_key(keys)
 
     def __init__(self, session, *streams, **options):
         super().__init__(session, *streams, **options)
