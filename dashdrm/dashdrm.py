@@ -363,14 +363,16 @@ class DASHStreamDRM(DASHStream):
         # Search for suitable video and audio representations
         for aset in mpd.periods[period].adaptationSets:
             if aset.contentProtections:
-                log.debug(f"{source} is protected by DRM")
                 if not session.options.get("decryption-key"):
                     raise PluginError(f"{source} is protected by DRM but no key given")
+                else:
+                    log.debug(f"{source} is protected by DRM")
             for rep in aset.representations:
                 if rep.contentProtections:
-                    log.debug(f"{source} is protected by DRM")
                     if not session.options.get("decryption-key"):
                         raise PluginError(f"{source} is protected by DRM but no key given")
+                    else:
+                        log.debug(f"{source} is protected by DRM")
                 if rep.mimeType.startswith("video"):
                     video.append(rep)
                 elif rep.mimeType.startswith("audio"):  # pragma: no branch
