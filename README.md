@@ -14,7 +14,7 @@ To make use of the plugin, add dashdrm:// in front of the url.
 ```sh
 streamlink --plugin-dir /path/to/dashdrm/plugin --default-stream best --url dashdrm://http://abc.def/xyz.mpd
 ```
-Multi period support is enabled automatically, however if you wish to jump straight to the current last period, you can do:
+Multi period support is enabled automatically, however if you wish to jump straight to the current last period when streamlink starts, you can do:
 ```sh
 streamlink --plugin-dir /path/to/dashdrm/plugin --default-stream best --url "dashdrm://http://abc.def/xyz.mpd period=-1"
 ```
