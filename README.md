@@ -8,7 +8,7 @@ In addition, the plugin also implements multi period support. Note that the [cav
 
 # Install and Use
 
-To use this plugin, you need to utilise streamlink's plugin [sideload](https://streamlink.github.io/latest/cli/plugin-sideloading.html) capability. Download the plugin source (dashdrm.py) and either place it in your streamlink plugins sideload directory, or put in a new directory and specify the path when executing streamlink with --plugin-dir <path_of_dashdrm.py>.
+To use this plugin, you need to utilise streamlink's plugin [sideload](https://streamlink.github.io/latest/cli/plugin-sideloading.html) capability. Download the plugin source by cloning the repository, or just downloading the plugin file (dashdrm.py) and either place it in your streamlink plugins sideload directory, or put in a new directory and specify the path when executing streamlink with --plugin-dir <path_of_dashdrm.py>.
 
 To make use of the plugin, add dashdrm:// in front of the url.
 ```sh
