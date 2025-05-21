@@ -16,7 +16,7 @@ streamlink --plugin-dir /path/to/dashdrm/plugin --default-stream best --url dash
 ```
 Multi period support is enabled automatically, however if you wish to jump straight to the current last period, you can do:
 ```sh
-streamlink --plugin-dir /path/to/dashdrm/plugin --default-stream best --url dashdrm://http://abc.def/xyz.mpd period=-1
+streamlink --plugin-dir /path/to/dashdrm/plugin --default-stream best --url "dashdrm://http://abc.def/xyz.mpd period=-1"
 ```
 
 # Parameters
@@ -29,7 +29,7 @@ The plugin accepts a number of optional parameters:
   </TR>
   <TR>
     <TD>--dashdrm-decryption-key &ltkey in hex&gt</TD>
-    <TD>This is a comman seperated list of decryption keys to be passed to ffmpeg. If only one key is given, then all streams will use this key. If 2 keys are given, then the video stream will use the first key, and all remaining streams (eg audio streams) will use the second key. If more than 2 keys are given, then the video stream will use the first key, and the second stream will use the second key, the third stream will use the third key etc. If more streams than keys are given, keys will be looped starting with the second key. The keys need to be in hex, either just the key by itself, or in the format of kid:key (although the kid is not used)</TD>
+    <TD>This is a comma seperated list of decryption keys to be passed to ffmpeg. If only one key is given, then all streams will use this key. If 2 keys are given, then the video stream will use the first key, and all remaining streams (eg audio streams) will use the second key. If more than 2 keys are given, then the video stream will use the first key, and the second stream will use the second key, the third stream will use the third key etc. If more streams than keys are given, keys will be looped starting with the second key. The keys need to be in hex, either just the key by itself, or in the format of kid:key (although the kid is not used)</TD>
   </TR>
   <TR>
     <TD>--dashdrm-presentation-delay &ltdelay in seconds&gt</TD>
