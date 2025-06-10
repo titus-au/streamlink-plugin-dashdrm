@@ -352,17 +352,17 @@ class DASHStreamDRM(DASHStream):
         cls,
         session: Streamlink,
         url_or_manifest: str,
-        period: int = 0, 
+        period: int | str = 0, 
         with_video_only: bool = False,
         with_audio_only: bool = False,
         **kwargs,
-    ) -> dict[str, Self]:
+    ) -> dict[str, DASHStream]:
         """
         Parse a DASH manifest file and return its streams.
 
         :param session: Streamlink session instance
         :param url_or_manifest: URL of the manifest file or an XML manifest string
-        :param period: Which MPD period to use (index number) for finding representations
+        :param period: Which MPD period to use (index number (int) or ``id`` attribute (str)) for finding representations
         :param with_video_only: Also return video-only streams, otherwise only return muxed streams
         :param with_audio_only: Also return audio-only streams, otherwise only return muxed streams
         :param kwargs: Additional keyword arguments passed to :meth:`requests.Session.request`
@@ -386,8 +386,21 @@ class DASHStreamDRM(DASHStream):
         audio: list[Representation | None] = [None] if with_video_only else []
         subtitles: list[Representation | None] = [None] if with_audio_only else []
 
+        available_periods = [f"{idx}{f' (id={p.id!r})' if p.id is not None else ''}" for idx, p in enumerate(mpd.periods)]
+        log.debug(f"Available DASH periods: {', '.join(available_periods)}")
+
+        try:
+            if isinstance(period, int):
+                period_selection = mpd.periods[period]
+            else:
+                period_selection = mpd.periods_map[period]
+        except LookupError:
+            raise PluginError(
+                f"DASH period {period!r} not found. Select a valid period by index or by id attribute value.",
+            ) from None
+
         # Search for suitable video and audio representations
-        for aset in mpd.periods[period].adaptationSets:
+        for aset in period_selection.adaptationSets:
             if aset.contentProtections:
                 if not session.options.get("decryption-key"):
                     raise PluginError(f"{source} is protected by DRM but no key given")
