@@ -356,7 +356,7 @@ class DASHStreamDRM(DASHStream):
         with_video_only: bool = False,
         with_audio_only: bool = False,
         **kwargs,
-    ) -> dict[str, DASHStream]:
+    ) -> dict[str, DASHStreamDRM]:
         """
         Parse a DASH manifest file and return its streams.
 
