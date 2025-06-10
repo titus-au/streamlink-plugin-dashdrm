@@ -3,12 +3,13 @@ from __future__ import annotations
 import re
 import itertools
 import logging
+import base64
 from collections import defaultdict
 from contextlib import suppress
 from typing import List, Self
 from datetime import timedelta
 
-from streamlink.exceptions import PluginError
+from streamlink.exceptions import PluginError, FatalPluginError
 from streamlink.plugin import Plugin, pluginmatcher, pluginargument
 from streamlink.plugin.plugin import HIGH_PRIORITY, parse_params, stream_weight
 from streamlink.stream.dash import DASHStream, DASHStreamWorker, DASHStreamWriter, DASHStreamReader
@@ -68,11 +69,46 @@ class MPEGDASHDRM(Plugin):
 
         # process and store plugin options before passing streams back
         for option in DASHDRM_OPTIONS:
-            self.session.options[option] = self.get_option(option)
+            if option == 'decryption-key':
+                self.session.options[option] = self._process_keys()
+            else:
+                self.session.options[option] = self.get_option(option)
 
         return DASHStreamDRM.parse_manifest(self.session,
                                             url,
                                             **params)
+
+    def _process_keys(self):
+        keys = self.get_option('decryption-key')
+        # if a colon separated key is given, assume its kid:key and take the
+        # last component after the colon
+        return_keys = []
+        for k in keys:
+            key = k.split(':')
+            key_len = len(key[-1])
+            log.debug('Decryption Key %s has %s digits', key[-1], key_len)
+            if key_len in (21, 22, 23, 24):
+                # key len of 21-24 may mean a base64 key was provided, so we 
+                # try and decode it
+                log.debug("Decryption key length is too short to be hex and looks like it might be base64, so we'll try and decode it..")
+                b64_string = key[-1]
+                padding = 4 - (len(b64_string) % 4)
+                b64_string = b64_string + ("=" * padding)
+                b64_key = base64.urlsafe_b64decode(b64_string).hex()
+                if b64_key:
+                    key = [b64_key]
+                    key_len = len(b64_key)
+                    log.debug('Decryption Key (post base64 decode) is %s and has %s digits', key[-1], key_len)
+            if key_len == 32:
+                # sanity check that it's a valid hex string
+                try:
+                    int(key[-1], 16)
+                except ValueError as err:
+                    raise FatalPluginError(f"Expecting 128bit key in 32 hex digits, but the key contains invalid hex.")
+            elif key_len != 32:
+                raise FatalPluginError(f"Expecting 128bit key in 32 hex digits.")
+            return_keys.append(key[-1])
+        return return_keys
 
 
 class FFMPEGMuxerDRM(FFMPEGMuxer):
@@ -92,16 +128,6 @@ class FFMPEGMuxerDRM(FFMPEGMuxer):
     '''
 
     @classmethod
-    def _split_key(cls, keys):
-        # if a colon separated key is given, assume its kid:key and take the
-        # last component after the colon
-        return_key = []
-        for k in keys:
-            key = k.split(':')
-            return_key.append(key[-1])
-        return return_key
-
-    @classmethod
     def _get_keys(cls, session):
         keys=[]
         if session.options.get("decryption-key"):
@@ -111,7 +137,7 @@ class FFMPEGMuxerDRM(FFMPEGMuxer):
             if len(keys) == 1:
                 keys.extend(keys)
         log.debug('Decryption Keys %s', keys)
-        return FFMPEGMuxerDRM._split_key(keys)
+        return keys
 
     def __init__(self, session, *streams, **options):
         super().__init__(session, *streams, **options)
