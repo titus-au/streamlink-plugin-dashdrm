@@ -70,7 +70,8 @@ class MPEGDASHDRM(Plugin):
         # process and store plugin options before passing streams back
         for option in DASHDRM_OPTIONS:
             if option == 'decryption-key':
-                self.session.options[option] = self._process_keys()
+                if self.get_option('decryption-key'):
+                    self.session.options[option] = self._process_keys()
             else:
                 self.session.options[option] = self.get_option(option)
 
