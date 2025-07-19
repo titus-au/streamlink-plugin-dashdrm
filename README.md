@@ -48,6 +48,10 @@ The plugin accepts a number of optional parameters:
     <TD>--dashdrm-use-subtitles</TD>
     <TD>Mux in subtitle tracks that are found, however ffmpeg currently does not support TTML/STPP</TD>
   </TR>
+    <TR>
+    <TD>--dashdrm-ignore-location</TD>
+    <TD>Workaround to ignore Location tag for in rare occasions where the Location tag lead to incorrect segment URLs</TD>
+  </TR>
 </TABLE>
 
 # Disclaimer

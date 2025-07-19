@@ -20,12 +20,18 @@ from streamlink.session import Streamlink
 from streamlink.utils.l10n import Language
 from streamlink.utils.times import now
 
+from streamlink.utils.parse import parse_xml
+from typing import Any
+from collections.abc import Mapping
+
+
 log = logging.getLogger(__name__)
 
 DASHDRM_OPTIONS = [
     "decryption-key",
     "presentation-delay",
     "use-subtitles",
+    "ignore-location",
 ]
 
 @pluginmatcher(
@@ -46,6 +52,11 @@ DASHDRM_OPTIONS = [
     "use-subtitles",
     action="store_true",
     help="Experiment with subtitles."
+)
+@pluginargument(
+    "ignore-location",
+    action="store_true",
+    help="Workaround to ignore Location tags that is not compliant resulting in wrong segment URLs."
 )
 
 class MPEGDASHDRM(Plugin):
@@ -348,6 +359,17 @@ class DASHStreamDRM(DASHStream):
 
     __shortname__ = "dashdrm"
 
+    @staticmethod
+    def parse_mpd(session, manifest: str, mpd_params: Mapping[str, Any]) -> MPD:
+        node = parse_xml(manifest, ignore_ns=True)
+        if session.options.get("ignore-location"):
+            location = node.find('Location')
+            if location is not None:
+                log.warning('Found Location tag: %s', location.text)
+                parent = location.getparent()
+                parent.remove(location)
+        return MPD(node, **mpd_params)
+
     @classmethod
     def parse_manifest(
         cls,
@@ -372,7 +394,7 @@ class DASHStreamDRM(DASHStream):
         manifest, mpd_params = cls.fetch_manifest(session, url_or_manifest, **kwargs)
 
         try:
-            mpd = cls.parse_mpd(manifest, mpd_params)
+            mpd = cls.parse_mpd(session, manifest, mpd_params)
         except Exception as err:
             raise PluginError(f"Failed to parse MPD manifest: {err}") from err
 
