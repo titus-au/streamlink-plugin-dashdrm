@@ -284,14 +284,16 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                     continue
 
                 iter_segments = representation.segments(
+                    sequence=self.sequence,
                     init=init,
                     # sync initial timeline generation between audio and video threads
                     timestamp=self.reader.timestamp if init else None,
                 )
                 yield_count = 0
                 for segment in iter_segments:
-                    if self.closed:
-                        break
+                    if init and not segment.init:
+                        self.sequence = segment.number
+                        init = False
                     yield_count += 1
                     yield segment
 
@@ -300,12 +302,16 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                     self.close()
                     return
 
+                # Implicit end of stream
+                if self.check_queue_deadline(queued):
+                    return                
+
                 if not self.reload():
                     back_off_factor = min(back_off_factor * 1.3, 10.0)
                 else:
                     back_off_factor = 1
 
-                init = False
+                #init = False
 
 
 class DASHStreamReaderDRM(DASHStreamReader):
@@ -345,6 +351,7 @@ class DASHStreamDRM(DASHStream):
         video_representation: Representation | None = None,
         audio_representations: List[Representation] | None = None,
         subtitles_representations: List[Representation] | None = None,
+        duration: float | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -352,6 +359,7 @@ class DASHStreamDRM(DASHStream):
             mpd,
             video_representation,
             audio_representations[0] if audio_representations[0] else None,
+            duration,
             **kwargs,
         )
         self.audio_representations = audio_representations
