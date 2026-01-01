@@ -243,7 +243,7 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
         init = True
         back_off_factor = 1
         new_rep = None
-        yield_count = -1
+        queued = False
         while not self.closed:
             # find the representation by ID
             representation = self.mpd.get_representation(self.reader.ident)
@@ -268,12 +268,12 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                     or 5
                 )
 
-            if new_rep and not yield_count:
+            if new_rep and not queued:
                 # New rep available and no yield so we swap to the new one
                 self.reader.ident = new_rep.ident
                 representation = new_rep
                 new_rep = None
-            elif new_rep and yield_count:
+            elif new_rep and queued:
                 # New rep available but we had yield so we dont swap yet.
                 # Set refresh to be very low since we know we actually have
                 # new content in the from of new_rep
@@ -290,12 +290,10 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                     # sync initial timeline generation between audio and video threads
                     timestamp=self.reader.timestamp if init else None,
                 )
-                yield_count = 0
                 for segment in iter_segments:
                     if init and not segment.init:
                         self.sequence = segment.num
                         init = False
-                    yield_count += 1
                     queued |= yield segment
 
                 # close worker if type is not dynamic (all segments were put into writer queue)
@@ -305,14 +303,13 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
 
                 # Implicit end of stream
                 if self.check_queue_deadline(queued):
-                    return                
+                    return
 
                 if not self.reload():
+                    # use min instead of max to limit run-away backoff
                     back_off_factor = min(back_off_factor * 1.3, 10.0)
                 else:
                     back_off_factor = 1
-
-                #init = False
 
 
 class DASHStreamReaderDRM(DASHStreamReader):
