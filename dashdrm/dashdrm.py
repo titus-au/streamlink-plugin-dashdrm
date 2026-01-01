@@ -283,6 +283,7 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                 if not representation:
                     continue
 
+                queued = False
                 iter_segments = representation.segments(
                     sequence=self.sequence,
                     init=init,
@@ -292,10 +293,10 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                 yield_count = 0
                 for segment in iter_segments:
                     if init and not segment.init:
-                        self.sequence = segment.number
+                        self.sequence = segment.num
                         init = False
                     yield_count += 1
-                    yield segment
+                    queued |= yield segment
 
                 # close worker if type is not dynamic (all segments were put into writer queue)
                 if self.mpd.type != "dynamic":
