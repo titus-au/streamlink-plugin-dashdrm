@@ -182,7 +182,6 @@ class FFMPEGMuxerDRM(FFMPEGMuxer):
         log.debug("Updated ffmpeg command %s", self._cmd)
 
 
-
 class DASHStreamWriterDRM(DASHStreamWriter):
     reader: DASHStreamReaderDRM
     stream: DASHStreamDRM
@@ -294,6 +293,13 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                     if init and not segment.init:
                         self.sequence = segment.num
                         init = False
+                    # check that the segment is actually available. If we are too
+                    # early, we wait until the segment is actually available before
+                    # yielding the segment. We add in 2 more seconds grace in case
+                    # there is some time difference between client and server
+                    if segment.available_in > 0:
+                        log.debug("Segment not yet available, waiting %s seconds", segment.available_in+2)
+                        self.wait(segment.available_in+2)
                     queued |= yield segment
 
                 # close worker if type is not dynamic (all segments were put into writer queue)
@@ -302,6 +308,7 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                     return
 
                 # Implicit end of stream
+
                 if self.check_queue_deadline(queued):
                     return
 
