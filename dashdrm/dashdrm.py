@@ -309,8 +309,8 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
 
                 # Implicit end of stream
 
-                if self.check_queue_deadline(queued):
-                    return
+                #if self.check_queue_deadline(queued):
+                #    return
 
                 if not self.reload():
                     # use min instead of max to limit run-away backoff
