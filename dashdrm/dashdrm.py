@@ -18,7 +18,7 @@ from streamlink.stream.ffmpegmux import FFMPEGMuxer
 from streamlink.utils.url import update_scheme
 from streamlink.session import Streamlink
 from streamlink.utils.l10n import Language
-from streamlink.utils.times import now
+from streamlink.utils.times import fromtimestamp, now
 
 from streamlink.utils.parse import parse_xml
 from typing import Any
@@ -205,6 +205,10 @@ class DASHStreamWriterDRM(DASHStreamWriter):
         if self.closed:
             return
 
+        if self.session.options.get("ignore-availability"):
+            segment.available_at = fromtimestamp(0)
+            log.debug(f"Ignoring availability timestamps. Now avallable at {segment.available_at}")
+
         availability_grace = 0
         if self.session.options.get("availability-grace"):
             availability_grace = float(self.session.options.get(
@@ -214,12 +218,11 @@ class DASHStreamWriterDRM(DASHStreamWriter):
         available_in = max(0.0, real_available_in+availability_grace)
         log.debug(f"{self.reader.mime_type} segment {name}: Available in {real_available_in:.01f}s ({segment.availability})")
 
-        if available_in > 0 and not self.session.options.get("ignore-availability"):
+        if available_in > 0:
             log.debug(f"{self.reader.mime_type} segment {name}: waiting {available_in:.01f}s ({segment.availability})")
             if not self.wait(available_in):
                 log.debug(f"{self.reader.mime_type} segment {name}: cancelled")
                 return
-
         return super().fetch(segment)
 
 
