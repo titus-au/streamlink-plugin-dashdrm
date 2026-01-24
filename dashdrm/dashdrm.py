@@ -205,10 +205,6 @@ class DASHStreamWriterDRM(DASHStreamWriter):
         if self.closed:
             return
 
-        if self.session.options.get("ignore-availability"):
-            segment.available_at = fromtimestamp(0)
-            log.debug(f"Ignoring availability timestamps. Now avallable at {segment.available_at}")
-
         real_available_in = (segment.available_at - now()).total_seconds()
         name = segment.name
         log.debug(f"{self.reader.mime_type} segment {name}: Available in {real_available_in:.01f}s ({segment.availability})")
@@ -219,6 +215,10 @@ class DASHStreamWriterDRM(DASHStreamWriter):
             segment.available_at = segment.available_at + timedelta(
                                             seconds=availability_grace)
             log.debug(f"{self.reader.mime_type} segment {name}: Adding {availability_grace} seconds to segment availability")
+
+        if self.session.options.get("ignore-availability"):
+            segment.available_at = fromtimestamp(0)
+            log.debug(f"Ignoring availability timestamps. Now avallable at {segment.available_at}")
 
         return super().fetch(segment)
 
