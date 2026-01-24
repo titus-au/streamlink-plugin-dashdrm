@@ -32,6 +32,8 @@ DASHDRM_OPTIONS = [
     "presentation-delay",
     "use-subtitles",
     "ignore-location",
+    "ignore-availability",
+    "availability-grace"
 ]
 
 @pluginmatcher(
@@ -57,6 +59,19 @@ DASHDRM_OPTIONS = [
     "ignore-location",
     action="store_true",
     help="Workaround to ignore Location tags that is not compliant resulting in wrong segment URLs."
+)
+@pluginargument(
+    "ignore-availability",
+    action="store_true",
+    help="Workaround to ignore segment availability times where server has"
+    " wrong availability segment times (eg times that are in the future)"
+)
+@pluginargument(
+    "availability-grace",
+    help="Workaround to delay getting segments even though the segment"
+    " availability time has been reached, as the segments are not"
+    " actually avaiable yet (resulting in 403/404 errors) possibly due to"
+    " mismatched server clock"
 )
 
 class MPEGDASHDRM(Plugin):
@@ -186,6 +201,27 @@ class DASHStreamWriterDRM(DASHStreamWriter):
     reader: DASHStreamReaderDRM
     stream: DASHStreamDRM
 
+    def fetch(self, segment: DASHSegment):
+        if self.closed:
+            return
+
+        availability_grace = 0
+        if self.session.options.get("availability-grace"):
+            availability_grace = float(self.session.options.get(
+                                    "availability-grace"))
+        name = segment.name
+        real_available_in = (segment.available_at - now()).total_seconds()
+        available_in = max(0.0, real_available_in+availability_grace)
+        log.debug(f"{self.reader.mime_type} segment {name}: Available in {real_available_in:.01f}s ({segment.availability})")
+
+        if available_in > 0 and not self.session.options.get("ignore-availability"):
+            log.debug(f"{self.reader.mime_type} segment {name}: waiting {available_in:.01f}s ({segment.availability})")
+            if not self.wait(available_in):
+                log.debug(f"{self.reader.mime_type} segment {name}: cancelled")
+                return
+
+        return super().fetch(segment)
+
 
 class DASHStreamWorkerDRM(DASHStreamWorker):
     reader: DASHStreamReaderDRM
@@ -292,14 +328,7 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                 for segment in iter_segments:
                     if init and not segment.init:
                         self.sequence = segment.num
-                        init = False
-                    # check that the segment is actually available. If we are too
-                    # early, we wait until the segment is actually available before
-                    # yielding the segment. We add in 2 more seconds grace in case
-                    # there is some time difference between client and server
-                    if segment.available_in > 0:
-                        log.debug("Segment not yet available, waiting %s seconds", segment.available_in+2)
-                        self.wait(segment.available_in+2)
+                        init = False                
                     queued |= yield segment
 
                 # close worker if type is not dynamic (all segments were put into writer queue)
