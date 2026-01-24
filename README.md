@@ -52,6 +52,15 @@ The plugin accepts a number of optional parameters:
     <TD>--dashdrm-ignore-location</TD>
     <TD>Workaround to ignore Location tag for in rare occasions where the Location tag lead to incorrect segment URLs</TD>
   </TR>
+    </TR>
+    <TR>
+    <TD>--dashdrm-ignore-availability</TD>
+    <TD>Workaround to ignore segment availability times for in rare occasions where the server is setting segment availability in the future even though the segments are available now, resulting in stream timeouts</TD>
+  </TR>
+    <TR>
+    <TD>--dashdrm-availability-grace &ltgrace in seconds&gt</TD>
+    <TD>Workaround to wait extra grace time on top of the segment available time, in cases where server is returning 403/404 errors when segments are being fetched as they are not yet available even though they are supposed to be</TD>
+  </TR>
 </TABLE>
 
 # Disclaimer
