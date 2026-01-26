@@ -55,11 +55,11 @@ The plugin accepts a number of optional parameters:
     </TR>
     <TR>
     <TD>--dashdrm-ignore-availability</TD>
-    <TD>Workaround to ignore segment availability times for in rare occasions where the server is setting segment availability in the future even though the segments are available now, resulting in stream timeouts</TD>
+    <TD>Workaround to ignore segment availability times for in rare occasions where the server is setting segment availability in the future even though the segments are available now, resulting in stream timeouts. Use this with caution as it'll completely ignore availability values thus will try and load segments that are in theory unavailable</TD>
   </TR>
     <TR>
     <TD>--dashdrm-availability-grace &ltgrace in seconds&gt</TD>
-    <TD>Workaround to wait extra grace time on top of the segment available time, in cases where server is returning 403/404 errors when segments are being fetched as they are not yet available even though they are supposed to be</TD>
+    <TD>Workaround to wait extra grace time on top of the segment available time, in cases where server is returning 403/404 errors when segments are being fetched as they are not yet available even though they are supposed to be. A negative grace value can also be given, which can cover cases where the availability times are in the future</TD>
   </TR>
 </TABLE>
 
