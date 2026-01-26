@@ -248,7 +248,7 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
     def check_new_rep(self):
         '''
         Check if new representation is available, if so find the matching stream
-        name and return with the new rep's stream object
+        and return with the new rep's stream object
         '''
         new_rep = None
         log.debug("Checking for new period and representations")
