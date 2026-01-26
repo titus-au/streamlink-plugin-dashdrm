@@ -251,22 +251,14 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
         name and return with the new rep's stream object
         '''
         new_rep = None
-        log.debug("Checking for new representations")
+        log.debug("Checking for new period and representations")
         next_period = self.next_period_available()
         if next_period:
-            # reparse manifest to find the next stream
-            reloaded_streams = DASHStreamDRM.parse_manifest(self.session, 
-                                                        self.mpd.url,
-                                                        next_period)
-            reload_stream = reloaded_streams[self.stream.stream_name]
-            if self.reader.mime_type == "video/mp4":
-                new_rep = reload_stream.video_representation
-                log.debug("New video representation found!")
-            elif self.reader.mime_type == "audio/mp4":
-                new_rep = reload_stream.audio_representation
-                log.debug("New audio representation found!")
-            else:
-                log.debug("No new representation found!")
+            p, a, r = self.reader.ident
+            new_rep = self.mpd.get_representation((self.mpd.periods[next_period].id,a,r))
+            if new_rep:
+                log.debug("New period found. New ident: %s", new_rep.ident)
+
         return new_rep
 
     def iter_segments(self):
@@ -557,10 +549,6 @@ class DASHStreamDRM(DASHStream):
                     ret_new[f"{q}_alt"] = items[n]
                 else:
                     ret_new[f"{q}_alt{n}"] = items[n]
-
-        # add stream_name to the returned streams so we can find it again
-        for stream_name in ret_new:
-            ret_new[stream_name].stream_name = stream_name
 
         return ret_new
 
