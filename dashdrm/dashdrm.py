@@ -270,6 +270,7 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
         init = True
         back_off_factor = 1
         new_rep = None
+        yield_count = -1
         queued = False
         while not self.closed:
             # find the representation by ID
@@ -295,16 +296,18 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                     or 5
                 )
 
-            if new_rep and not queued:
+            if new_rep and not yield_count:
                 # New rep available and no yield so we swap to the new one
                 self.reader.ident = new_rep.ident
                 representation = new_rep
                 new_rep = None
-            elif new_rep and queued:
+                log.debug("New period and now yield. Swapping to next period.")
+            elif new_rep and yield_count:
                 # New rep available but we had yield so we dont swap yet.
                 # Set refresh to be very low since we know we actually have
                 # new content in the from of new_rep
                 refresh_wait = 1
+                log.debug("New period and but we have yield. Not swapping to next period yet.")
 
             with self.sleeper(refresh_wait * back_off_factor):
                 if not representation:
@@ -317,10 +320,12 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                     # sync initial timeline generation between audio and video threads
                     timestamp=self.reader.timestamp if init else None,
                 )
+                yield_count = 0
                 for segment in iter_segments:
                     if init and not segment.init:
                         self.sequence = segment.num
-                        init = False                
+                        init = False     
+                    yield_count += 1
                     queued |= yield segment
 
                 # close worker if type is not dynamic (all segments were put into writer queue)
