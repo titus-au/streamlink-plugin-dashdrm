@@ -256,7 +256,7 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
         if next_period:
             reloaded_streams = DASHStreamDRM.parse_manifest(self.session,
                                                         self.mpd.url,
-                                                        next_period)        
+                                                        next_period)     
             p, a, r = self.reader.ident
             new_rep = self.mpd.get_representation((self.mpd.periods[next_period].id,a,r))
             if new_rep:
