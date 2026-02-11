@@ -254,10 +254,25 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
         log.debug("Checking for new period and representations")
         next_period = self.next_period_available()
         if next_period:
+            reloaded_streams = DASHStreamDRM.parse_manifest(self.session,
+                                                        self.mpd.url,
+                                                        next_period)        
             p, a, r = self.reader.ident
             new_rep = self.mpd.get_representation((self.mpd.periods[next_period].id,a,r))
             if new_rep:
                 log.debug("New period found. New ident: %s", new_rep.ident)
+            else:
+                log.debug("New period found, but can't find matching rep, trying to find the stream the old way")
+                
+                reload_stream = reloaded_streams[self.stream.stream_name]
+                if self.reader.mime_type == "video/mp4":
+                    new_rep = reload_stream.video_representation
+                    log.debug("New video representation found!")
+                elif self.reader.mime_type == "audio/mp4":
+                    new_rep = reload_stream.audio_representation
+                    log.debug("New audio representation found!")
+                else:
+                    log.debug("Still can't find new rep in new period")
 
         return new_rep
 
@@ -270,7 +285,6 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
         init = True
         back_off_factor = 1
         new_rep = None
-        yield_count = -1
         queued = False
         while not self.closed:
             # find the representation by ID
@@ -296,13 +310,13 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                     or 5
                 )
 
-            if new_rep and not yield_count:
+            if new_rep and not queued:
                 # New rep available and no yield so we swap to the new one
                 self.reader.ident = new_rep.ident
                 representation = new_rep
                 new_rep = None
-                log.debug("New period and now yield. Swapping to next period.")
-            elif new_rep and yield_count:
+                log.debug("New period and no yield. Swapping to next period.")
+            elif new_rep and queued:
                 # New rep available but we had yield so we dont swap yet.
                 # Set refresh to be very low since we know we actually have
                 # new content in the from of new_rep
@@ -320,13 +334,12 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                     # sync initial timeline generation between audio and video threads
                     timestamp=self.reader.timestamp if init else None,
                 )
-                yield_count = 0
                 for segment in iter_segments:
                     if init and not segment.init:
                         self.sequence = segment.num
-                        init = False     
-                    yield_count += 1
+                        init = False
                     queued |= yield segment
+
 
                 # close worker if type is not dynamic (all segments were put into writer queue)
                 if self.mpd.type != "dynamic":
@@ -554,6 +567,10 @@ class DASHStreamDRM(DASHStream):
                     ret_new[f"{q}_alt"] = items[n]
                 else:
                     ret_new[f"{q}_alt{n}"] = items[n]
+
+        # add stream_name to the returned streams so we can find it again
+        for stream_name in ret_new:
+            ret_new[stream_name].stream_name = stream_name
 
         return ret_new
 
