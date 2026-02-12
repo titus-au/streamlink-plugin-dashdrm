@@ -33,7 +33,9 @@ DASHDRM_OPTIONS = [
     "use-subtitles",
     "ignore-location",
     "ignore-availability",
-    "availability-grace"
+    "availability-grace",
+    "always-play-last-period",
+    "video-codec-preset"
 ]
 
 @pluginmatcher(
@@ -72,6 +74,16 @@ DASHDRM_OPTIONS = [
     " availability time has been reached, as the segments are not"
     " actually avaiable yet (resulting in 403/404 errors) possibly due to"
     " mismatched server clock"
+)
+@pluginargument(
+    "always-play-last-period",
+    action="store_true",
+    help="Always jump to the last period, even when multiple new periods are found"
+)
+@pluginargument(
+    "video-codec-preset",
+    help="Force transcode with libx264 with specific preset. Using this will force"
+    " transcoding with libx264 with a specific preset (eg ultrafast)"
 )
 
 class MPEGDASHDRM(Plugin):
@@ -173,6 +185,9 @@ class FFMPEGMuxerDRM(FFMPEGMuxer):
         keys = self._get_keys(session)
         key = 0
         subtitles = self.session.options.get("use-subtitles")
+        vid_codec_preset = None
+        if session.options.get("video-codec-preset"):
+            vid_codec_preset = self.session.options.get("video-codec-preset")
         # Build new ffmpeg command list
         old_cmd = self._cmd.copy()
         self._cmd = []
@@ -192,8 +207,13 @@ class FFMPEGMuxerDRM(FFMPEGMuxer):
                 _ = old_cmd.pop(0)
                 self._cmd.extend([cmd, _])
                 self._cmd.extend(["-c:s", "copy"])
+            elif vid_codec_preset and cmd == "-c:v":
+                _ = old_cmd.pop(0)
+                self._cmd.extend([cmd, _])
+                self._cmd.extend(["-preset:v", vid_codec_preset])
             else:
                 self._cmd.append(cmd)
+        #self._cmd.extend(["-report"])
         log.debug("Updated ffmpeg command %s", self._cmd)
 
 
@@ -242,7 +262,10 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
         log.debug("Number of periods: %s", len(current_period_ids))
 
         if len(current_period_ids) > current_period_idx + 1:
-            return current_period_idx + 1
+            if self.session.options.get("always-play-last-period"):
+                return current_period_ids[-1]
+            else:
+                return current_period_ids[current_period_idx + 1]
         return 0
 
     def check_new_rep(self):
@@ -256,9 +279,9 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
         if next_period:
             reloaded_streams = DASHStreamDRM.parse_manifest(self.session,
                                                         self.mpd.url,
-                                                        next_period)     
+                                                        next_period)
             p, a, r = self.reader.ident
-            new_rep = self.mpd.get_representation((self.mpd.periods[next_period].id,a,r))
+            new_rep = self.mpd.get_representation((next_period,a,r))
             if new_rep:
                 log.debug("New period found. New ident: %s", new_rep.ident)
             else:
