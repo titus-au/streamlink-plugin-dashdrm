@@ -4,6 +4,7 @@ import re
 import itertools
 import logging
 import base64
+import queue
 from collections import defaultdict
 from contextlib import suppress
 from typing import List, Self
@@ -24,6 +25,8 @@ from streamlink.utils.parse import parse_xml
 from typing import Any
 from collections.abc import Mapping
 
+period_sync_queue = queue.Queue()
+rep_sync_queue = queue.Queue()
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +38,8 @@ DASHDRM_OPTIONS = [
     "ignore-availability",
     "availability-grace",
     "always-play-last-period",
-    "video-codec-preset"
+    "video-codec-preset",
+    "video-timescale",
 ]
 
 @pluginmatcher(
@@ -85,6 +89,13 @@ DASHDRM_OPTIONS = [
     help="Use this to specific preset for transcode. This option is meant to be"
     " paired with --ffmpeg-video-transcode. eg transcoding to libx264 with a"
     " specific preset (eg ultrafast)"
+)
+@pluginargument(
+    "video-timescale",
+    help="Use this to only display videos with the specifie timescale (eg 50000)"
+    " filtering out any other. This can be used in multi-period mpds to display"
+    " the main content and filter out other content (eg ads) that has incompatible"
+    " timescale which can cause issues with client/players"
 )
 
 class MPEGDASHDRM(Plugin):
@@ -249,57 +260,6 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
     writer: DASHStreamWriterDRM
     stream: DASHStreamDRM
 
-    def next_period_available(self):
-        '''
-        Check whether there are any more periods in the overall list of periods
-        beyond the current period id. If so, return the index for the next period
-        otherwise return 0
-        '''
-        period_id = self.reader.ident[0]
-        current_period_ids = [ p.id for p in self.mpd.periods ]
-        current_period_idx = current_period_ids.index(period_id)
-
-        log.debug("Current playing period: %s", current_period_idx + 1)
-        log.debug("Number of periods: %s", len(current_period_ids))
-
-        if len(current_period_ids) > current_period_idx + 1:
-            if self.session.options.get("always-play-last-period"):
-                return current_period_ids[-1]
-            else:
-                return current_period_ids[current_period_idx + 1]
-        return 0
-
-    def check_new_rep(self):
-        '''
-        Check if new representation is available, if so find the matching stream
-        and return with the new rep's stream object
-        '''
-        new_rep = None
-        log.debug("Checking for new period and representations")
-        next_period = self.next_period_available()
-        if next_period:
-            reloaded_streams = DASHStreamDRM.parse_manifest(self.session,
-                                                        self.mpd.url,
-                                                        next_period)
-            p, a, r = self.reader.ident
-            new_rep = self.mpd.get_representation((next_period,a,r))
-            if new_rep:
-                log.debug("New period found. New ident: %s", new_rep.ident)
-            else:
-                log.debug("New period found, but can't find matching rep, trying to find the stream the old way")
-                
-                reload_stream = reloaded_streams[self.stream.stream_name]
-                if self.reader.mime_type == "video/mp4":
-                    new_rep = reload_stream.video_representation
-                    log.debug("New video representation found!")
-                elif self.reader.mime_type == "audio/mp4":
-                    new_rep = reload_stream.audio_representation
-                    log.debug("New audio representation found!")
-                else:
-                    log.debug("Still can't find new rep in new period")
-
-        return new_rep
-
     def iter_segments(self):
         '''
         This is copy of iter_segments, but with DRM checks disabled,
@@ -310,14 +270,26 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
         back_off_factor = 1
         new_rep = None
         queued = False
+        last_segment = None
+        first = True
+        filtered = False
+        video_is_filtered = False
+        repeated = 0
         while not self.closed:
             # find the representation by ID
             representation = self.mpd.get_representation(self.reader.ident)
 
             # check if a new representation is available
-            if not new_rep:
-                new_rep = self.check_new_rep()
+            if not first and not new_rep:
+                new_rep, video_is_filtered = self.check_new_rep()
+            elif first:
+                _, filtered = self.check_new_rep(representation)
+                if filtered:
+                    representation = None
+                log.debug("First run. Video filter %s.", filtered)
 
+
+            first = False
             if self.mpd.type == "static":
                 refresh_wait = 5
             else:
@@ -340,6 +312,10 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                 representation = new_rep
                 new_rep = None
                 log.debug("New period and no yield. Swapping to next period.")
+                if video_is_filtered:
+                    log.debug("New period %s marked to be filtered.", self.reader.ident)
+                    filtered = True
+                    representation = None
             elif new_rep and queued:
                 # New rep available but we had yield so we dont swap yet.
                 # Set refresh to be very low since we know we actually have
@@ -349,8 +325,16 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
 
             with self.sleeper(refresh_wait * back_off_factor):
                 if not representation:
+                    if filtered:
+                        log.debug("Period is marked to be filtered.")
+                        if last_segment:
+                            repeated += 1
+                            log.debug("Repeating last segment %s times.", repeated)
+                            yield last_segment
+                        else:
+                            log.debug("No last segment to repeat.")
+                    self.reload()
                     continue
-
                 queued = False
                 iter_segments = representation.segments(
                     sequence=self.sequence,
@@ -362,8 +346,9 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                     if init and not segment.init:
                         self.sequence = segment.num
                         init = False
+                    last_segment = segment
+                    repeated = 0
                     queued |= yield segment
-
 
                 # close worker if type is not dynamic (all segments were put into writer queue)
                 if self.mpd.type != "dynamic":
@@ -381,6 +366,209 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                 else:
                     back_off_factor = 1
 
+class DASHStreamWorkerDRMVideo(DASHStreamWorkerDRM):
+    reader: DASHStreamReaderDRMVideo
+    writer: DASHStreamWriterDRM
+    stream: DASHStreamDRM
+
+    def rep_check_filtered(self, first_rep=None):
+        if not first_rep:
+            representation = self.mpd.get_representation(self.reader.ident)
+        else:
+            representation = first_rep
+        if representation.segmentTemplate:
+            current_timescale = representation.segmentTemplate.timescale
+        elif representation.segmentList:
+            current_timescale = representation.segmentList.timescale
+        else:
+            current_timescale = None
+        log.debug("Current rep (%s) timescale: %s", self.reader.mime_type, current_timescale)
+
+        is_filtered = False
+        if self.session.options.get("video-timescale"):
+            wanted_timescale = int(self.session.options.get("video-timescale"))
+            if current_timescale and (current_timescale != wanted_timescale):
+                is_filtered = True
+        return is_filtered
+
+    def next_period_available(self):
+        '''
+        Check whether there are any more periods in the overall list of periods
+        beyond the current period id. If so, return the index for the next period
+        otherwise return 0
+        '''
+        period_id = self.reader.ident[0]
+        current_period_ids = [ p.id for p in self.mpd.periods ]
+        current_period_idx = current_period_ids.index(period_id)
+
+        log.debug("Current playing period: %s", current_period_idx + 1)
+        log.debug("Number of periods: %s", len(current_period_ids))
+
+        next_period = 0
+        if len(current_period_ids) > current_period_idx + 1:
+            if self.session.options.get("always-play-last-period"):
+                next_period = current_period_ids[-1]
+            else:
+                next_period = current_period_ids[current_period_idx + 1]
+
+        # tell the audio streams
+        audio_count = len(self.stream.audio_representations)
+        if audio_count == 1 and self.stream.audio_representations == [None]:
+            audio_count = 0
+        if audio_count > 0:
+            for _ in range(audio_count):
+                period_sync_queue.put(next_period)
+        # tell the subtitle streams
+        subtitles_count = len(self.stream.subtitles_representations)
+        if subtitles_count == 1 and self.stream.subtitles_representations == [None]:
+            subtitles_count = 0
+        if subtitles_count > 0:
+            for _ in range(subtitles_count):
+                period_sync_queue.put(next_period)
+        return next_period
+
+    def check_new_rep(self, first_rep=None):
+        '''
+        Check if new representation is available, if so find the matching stream
+        and return with the new rep's stream object
+        '''
+        new_video_rep = None
+        is_filtered = False
+        audio_count = len(self.stream.audio_representations)
+        if audio_count == 1 and self.stream.audio_representations == [None]:
+            audio_count = 0
+        subtitles_count = len(self.stream.subtitles_representations)
+        if subtitles_count == 1 and self.stream.subtitles_representations == [None]:
+            subtitles_count = 0
+        log.debug("Audio stream count: %s", audio_count)
+        log.debug("Subtitles stream count: %s", subtitles_count)
+
+        if first_rep:
+            is_filtered = self.rep_check_filtered(first_rep)
+            log.debug("Telling non-video streams first rep and filter")
+            # tell the audio streams
+            if audio_count > 0:
+                for _ in range(audio_count):
+                    rep_sync_queue.put((new_video_rep, is_filtered))
+            # tell the subtitle streams
+            if subtitles_count > 0:
+                for _ in range(subtitles_count):
+                    rep_sync_queue.put((new_video_rep, is_filtered))
+            log.debug("Current rep_sync queue size: %s", rep_sync_queue.qsize())
+
+            return (None, is_filtered)
+
+        log.debug("Checking for new period and representations in video stream")
+        next_period = self.next_period_available()
+        if next_period:
+            reloaded_streams = DASHStreamDRM.parse_manifest(self.session,
+                                                        self.mpd.url,
+                                                        next_period)
+            p, a, r = self.reader.ident
+            new_video_rep = self.mpd.get_representation((next_period,a,r))
+            if new_video_rep:
+                log.debug("New video rep found. New ident: %s", new_video_rep.ident)
+            else:
+                log.debug("New period found, but can't find matching video rep, trying to find the stream the old way")
+                reload_stream = reloaded_streams[self.stream.stream_name]
+                new_video_rep = reload_stream.video_representation
+                if new_video_rep:
+                    log.debug("New video representation found!")
+
+            is_filtered = self.rep_check_filtered(new_video_rep)
+
+            log.debug("Telling non-video streams new rep and filter")
+            # tell the audio streams
+            if rep_sync_queue.qsize() > 0:
+                log.debug("Current rep_sync queue size is non-zero (%s), waiting 5 seconds to give other streams time to catch up", rep_sync_queue.qsize())
+                self.sleeper(5)
+                if rep_sync_queue.qsize() > 0:
+                    log.debug("Current rep_sync queue size is still non-zero (%s). This means streams are out of sync.", rep_sync_queue.qsize())
+            if audio_count > 0:
+                for _ in range(audio_count):
+                    rep_sync_queue.put((new_video_rep, is_filtered))
+            # tell the subtitle streams
+            if subtitles_count > 0:
+                for _ in range(subtitles_count):
+                    rep_sync_queue.put((new_video_rep, is_filtered))
+            log.debug("Current rep_sync queue size: %s", rep_sync_queue.qsize())
+        return (new_video_rep, is_filtered)
+
+class DASHStreamWorkerDRMNonVideo(DASHStreamWorkerDRM):
+    reader: DASHStreamReaderDRM
+    writer: DASHStreamWriterDRM
+    stream: DASHStreamDRM
+
+    def next_period_available(self):
+        '''
+        Check whether there are any more periods in the overall list of periods
+        beyond the current period id. If so, return the index for the next period
+        otherwise return 0
+        '''
+        period_id = self.reader.ident[0]
+        current_period_ids = [ p.id for p in self.mpd.periods ]
+        current_period_idx = current_period_ids.index(period_id)
+
+        log.debug("Current playing period: %s", current_period_idx + 1)
+        log.debug("Number of periods: %s", len(current_period_ids))
+        next_period = period_sync_queue.get(block=True)
+        return next_period
+
+    def check_new_rep(self, stream_type=None, first_rep=None):
+
+        new_stream_rep = None
+        is_filtered = False
+        if first_rep:
+            log.debug("Getting from video streams first rep and filter")
+            log.debug("Current rep_sync queue size just before get: %s", rep_sync_queue.qsize())
+            _, is_filtered = rep_sync_queue.get(block=True)
+            return (None, is_filtered)
+
+        log.debug("Checking new reps from video stream")
+        next_period = self.next_period_available()
+        if next_period:
+            log.debug("Got next period %s from video stream", next_period)
+            reloaded_streams = DASHStreamDRM.parse_manifest(self.session,
+                                                        self.mpd.url,
+                                                        next_period)
+            p, a, r = self.reader.ident
+            new_stream_rep = self.mpd.get_representation((next_period,a,r))
+            if new_stream_rep:
+                log.debug("New %s rep found. New ident: %s", stream_type, new_stream_rep.ident)
+            else:
+                log.debug("New period found, but can't find matching %s rep, trying to find the stream the old way", stream_type)
+                reload_stream = reloaded_streams[self.stream.stream_name]
+                if stream_type == "audio":
+                    audio_num=int(self.name[-1])
+                    new_stream_rep = reload_stream.audio_representations[audio_num]
+                elif stream_type == "sub":
+                    new_stream_rep = reload_stream.subtitles_representation
+                if new_stream_rep:
+                    log.debug("New %s representation found!", stream_type)
+
+            log.debug("Checking video rep and filter status from video stream")
+            log.debug("Current rep_sync queue size just before get: %s", rep_sync_queue.qsize())
+            new_video_rep, is_filtered = rep_sync_queue.get(block=True)
+            log.debug("Video stream sent video rep %s and filter status %s", new_video_rep, is_filtered)
+            log.debug("New video rep: %s, isfiltered: %s", new_video_rep.ident, is_filtered)
+            return (new_stream_rep, is_filtered)
+        return (None, False)
+
+class DASHStreamWorkerDRMAudio(DASHStreamWorkerDRMNonVideo):
+    reader: DASHStreamReaderDRMAudio
+    writer: DASHStreamWriterDRM
+    stream: DASHStreamDRM
+
+    def check_new_rep(self, first_rep=None):
+        return super().check_new_rep(stream_type="audio", first_rep=first_rep)
+
+class DASHStreamWorkerDRMSub(DASHStreamWorkerDRMNonVideo):
+    reader: DASHStreamReaderDRMSub
+    writer: DASHStreamWriterDRM
+    stream: DASHStreamDRM
+
+    def check_new_rep(self, first_rep=None):
+        return super().check_new_rep(stream_type="sub", first_rep=first_rep)
 
 class DASHStreamReaderDRM(DASHStreamReader):
     __worker__ = DASHStreamWorkerDRM
@@ -390,12 +578,27 @@ class DASHStreamReaderDRM(DASHStreamReader):
     writer: DASHStreamWriterDRM
     stream: DASHStreamDRM
 
-
-class DASHStreamReaderSUB(DASHStreamReader):
-    __worker__ = DASHStreamWorkerDRM
+class DASHStreamReaderDRMVideo(DASHStreamReaderDRM):
+    __worker__ = DASHStreamWorkerDRMVideo
     __writer__ = DASHStreamWriterDRM
 
-    worker: DASHStreamWorkerDRM
+    worker: DASHStreamWorkerDRMVideo
+    writer: DASHStreamWriterDRM
+    stream: DASHStreamDRM
+
+class DASHStreamReaderDRMAudio(DASHStreamReaderDRM):
+    __worker__ = DASHStreamWorkerDRMAudio
+    __writer__ = DASHStreamWriterDRM
+
+    worker: DASHStreamWorkerDRMAudio
+    writer: DASHStreamWriterDRM
+    stream: DASHStreamDRM
+
+class DASHStreamReaderDRMSub(DASHStreamReaderDRM):
+    __worker__ = DASHStreamWorkerDRMSub
+    __writer__ = DASHStreamWriterDRM
+
+    worker: DASHStreamWorkerDRMSub
     writer: DASHStreamWriterDRM
     stream: DASHStreamDRM
 
@@ -612,7 +815,7 @@ class DASHStreamDRM(DASHStream):
         metadata = {}
 
         if rep_video:
-            video = DASHStreamReaderDRM(self, rep_video, timestamp, name="video")
+            video = DASHStreamReaderDRMVideo(self, rep_video, timestamp, name="video")
             log.debug(f"Opening DASH reader for: {rep_video.ident!r} - {rep_video.mimeType}")
             video.open()
             fds.append(video)
@@ -625,7 +828,7 @@ class DASHStreamDRM(DASHStream):
         next_map = 1
         if rep_audios:
             for i, rep_audio in enumerate(rep_audios):
-                audio = DASHStreamReaderDRM(self, rep_audio, timestamp, name="audio"+str(i))
+                audio = DASHStreamReaderDRMAudio(self, rep_audio, timestamp, name="audio"+str(i))
                 if not audio1:
                     audio1 = audio
                 log.debug(f"Opening DASH reader for: {rep_audio.ident!r} - {rep_audio.mimeType}")
@@ -640,7 +843,7 @@ class DASHStreamDRM(DASHStream):
             for _, rep_subtitle in enumerate(rep_subtitles):
                 #if not rep_subtitle:
                     #break
-                subtitle = DASHStreamReaderSUB(self, rep_subtitle, timestamp, name="subtitle"+str(_))
+                subtitle = DASHStreamReaderDRMSub(self, rep_subtitle, timestamp, name="subtitle"+str(_))
                 log.debug(f"Opening DASH reader for: {rep_subtitle.ident!r} - {rep_subtitle.mimeType}")
                 subtitle.open()
                 fds.append(subtitle)
