@@ -82,8 +82,9 @@ DASHDRM_OPTIONS = [
 )
 @pluginargument(
     "video-codec-preset",
-    help="Force transcode with libx264 with specific preset. Using this will force"
-    " transcoding with libx264 with a specific preset (eg ultrafast)"
+    help="Use this to specific preset for transcode. This option is meant to be"
+    " paired with --ffmpeg-video-transcode. eg transcoding to libx264 with a"
+    " specific preset (eg ultrafast)"
 )
 
 class MPEGDASHDRM(Plugin):
