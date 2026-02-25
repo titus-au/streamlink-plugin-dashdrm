@@ -612,7 +612,7 @@ class DASHStreamDRM(DASHStream):
         metadata = {}
 
         if rep_video:
-            video = DASHStreamReaderDRM(self, rep_video, timestamp)
+            video = DASHStreamReaderDRM(self, rep_video, timestamp, name="video")
             log.debug(f"Opening DASH reader for: {rep_video.ident!r} - {rep_video.mimeType}")
             video.open()
             fds.append(video)
@@ -625,7 +625,7 @@ class DASHStreamDRM(DASHStream):
         next_map = 1
         if rep_audios:
             for i, rep_audio in enumerate(rep_audios):
-                audio = DASHStreamReaderDRM(self, rep_audio, timestamp)
+                audio = DASHStreamReaderDRM(self, rep_audio, timestamp, name="audio"+str(i))
                 if not audio1:
                     audio1 = audio
                 log.debug(f"Opening DASH reader for: {rep_audio.ident!r} - {rep_audio.mimeType}")
@@ -640,7 +640,7 @@ class DASHStreamDRM(DASHStream):
             for _, rep_subtitle in enumerate(rep_subtitles):
                 #if not rep_subtitle:
                     #break
-                subtitle = DASHStreamReaderSUB(self, rep_subtitle, timestamp)
+                subtitle = DASHStreamReaderSUB(self, rep_subtitle, timestamp, name="subtitle"+str(_))
                 log.debug(f"Opening DASH reader for: {rep_subtitle.ident!r} - {rep_subtitle.mimeType}")
                 subtitle.open()
                 fds.append(subtitle)
