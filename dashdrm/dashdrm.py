@@ -10,7 +10,7 @@ from typing import List, Self
 from datetime import timedelta
 
 from streamlink.exceptions import PluginError, FatalPluginError
-from streamlink.plugin import Plugin, pluginmatcher, pluginargument
+from streamlink.plugin import pluginmatcher, pluginargument
 from streamlink.plugin.plugin import HIGH_PRIORITY, parse_params, stream_weight
 from streamlink.stream.dash import DASHStream, DASHStreamWorker, DASHStreamWriter, DASHStreamReader
 from streamlink.stream.dash.manifest import MPD, Representation
@@ -20,6 +20,7 @@ from streamlink.session import Streamlink
 from streamlink.utils.l10n import Language
 from streamlink.utils.times import fromtimestamp, now
 from streamlink.logger import getLogger
+from streamlink.plugins.dash import MPEGDASH
 
 from streamlink.utils.parse import parse_xml
 from typing import Any
@@ -98,18 +99,7 @@ DASHDRM_OPTIONS = [
     " timescale which can cause issues with client/players"
 )
 
-class MPEGDASHDRM(Plugin):
-    @classmethod
-    def stream_weight(cls, stream):
-        match = re.match(r"^(?:(.*)\+)?(?:a(\d+)k)$", stream)
-        if match and match.group(1) and match.group(2):
-            weight, group = stream_weight(match.group(1))
-            weight += int(match.group(2))
-            return weight, group
-        elif match and match.group(2):
-            return stream_weight(f"{match.group(2)}k")
-        else:
-            return stream_weight(stream)
+class MPEGDASHDRM(MPEGDASH):
 
     def _get_streams(self):
         data = self.match.groupdict()
