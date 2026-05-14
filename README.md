@@ -77,7 +77,7 @@ The plugin accepts a number of optional parameters:
     </TR>
     <TR>
     <TD>--dashdrm-language</TD>
-    <TD>Allow filtering of audio to a specific language (that doesn't align to a specific locale, so cannot be chosen via the standard streamlink cli options. This option is only relevant when multi-audio is disabled</TD>
+    <TD>Allow filtering of audio to a specific language (that doesn't align to a specific locale, so cannot be chosen via the standard streamlink cli option). This option is only relevant when multi-audio is disabled</TD>
   </TR>
 </TABLE>
 
