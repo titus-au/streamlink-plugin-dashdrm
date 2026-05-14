@@ -122,6 +122,10 @@ class MPEGDASHDRM(MPEGDASH):
             if option == 'decryption-key':
                 if self.get_option('decryption-key'):
                     self.session.options[option] = self._process_keys()
+            elif option == 'always-play-last-period':
+                # jump to last period unless period is specifically set
+                if not params.get('period'):
+                    params['period'] = -1
             else:
                 self.session.options[option] = self.get_option(option)
 
