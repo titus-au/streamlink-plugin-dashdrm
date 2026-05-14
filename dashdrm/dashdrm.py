@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 import itertools
-import logging
 import base64
 import queue
 from collections import defaultdict
@@ -20,6 +19,7 @@ from streamlink.utils.url import update_scheme
 from streamlink.session import Streamlink
 from streamlink.utils.l10n import Language
 from streamlink.utils.times import fromtimestamp, now
+from streamlink.logger import getLogger
 
 from streamlink.utils.parse import parse_xml
 from typing import Any
@@ -28,7 +28,7 @@ from collections.abc import Mapping
 period_sync_queue = queue.Queue()
 rep_sync_queue = queue.Queue()
 
-log = logging.getLogger(__name__)
+log = getLogger(__name__)
 
 DASHDRM_OPTIONS = [
     "decryption-key",
