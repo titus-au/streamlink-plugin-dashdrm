@@ -61,6 +61,22 @@ The plugin accepts a number of optional parameters:
     <TD>--dashdrm-availability-grace &ltgrace in seconds&gt</TD>
     <TD>Workaround to wait extra grace time on top of the segment available time, in cases where server is returning 403/404 errors when segments are being fetched as they are not yet available even though they are supposed to be. A negative grace value can also be given, which can cover cases where the availability times are in the future</TD>
   </TR>
+  </TR>
+    <TR>
+    <TD>--dashdrm-always-play-last-period</TD>
+    <TD>Force dashdrm to jump straight to the last available period. If you set a specific starting period, then streamlink will play that period first then jump to the last period, otherwise it will go straight to the last period from the beginning</TD>
+  </TR>
+    </TR>
+    <TR>
+    <TD>--dashdrm-disable-multi-audio</TD>
+    <TD>Force dashdrm to revert to standard dash plugin behavior of returning streams with a single audio stream, and being able to choose the bitrate of your choice within a specific language if multiple languages are present</TD>
+  </TR>
+    </TR>
+    </TR>
+    <TR>
+    <TD>--dashdrm-language</TD>
+    <TD>Allow filtering of audio to a specific language (that doesn't align to a specific locale, so cannot be chosen via the standard streamlink cli options. This option is only relevant when multi-audio is disabled</TD>
+  </TR>
 </TABLE>
 
 # Disclaimer
