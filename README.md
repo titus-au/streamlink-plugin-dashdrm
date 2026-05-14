@@ -6,6 +6,8 @@ This is a reimplementation of [streamlink-drm](https://github.com/ImAleeexx/stre
 
 In addition, the plugin also implements multi period support. Note that the [caveats](https://github.com/streamlink/streamlink/issues/5058) around periods still applies, such as differing video specifications likely causing video players to not play properly, or when switching to a new period too quickly thus cutting off the previous period, so YMMV. Lastly, the plugin currently contains code to also include subtitle streams, however ffmpeg has no support for TTML decoding at this stage, so any TTML/STPP based subtitles will not be recognised by the player even if it is included.
 
+An implementation of this plugin for HLS DRM streams can be found at [https://github.com/titus-au/streamlink-plugin-hlsdrm](https://github.com/titus-au/streamlink-plugin-hlsdrm).
+
 # Install and Use
 
 To use this plugin, you need to utilise streamlink's plugin [sideload](https://streamlink.github.io/latest/cli/plugin-sideloading.html) capability. Download the plugin source by cloning the repository, or just downloading the plugin file (dashdrm.py) and either place it in your streamlink plugins sideload directory, or put in a new directory and specify the path when executing streamlink with --plugin-dir <path_of_dashdrm.py>.
