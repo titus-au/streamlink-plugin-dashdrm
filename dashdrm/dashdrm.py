@@ -11,9 +11,15 @@ from datetime import timedelta
 
 from streamlink.exceptions import PluginError, FatalPluginError
 from streamlink.plugin import pluginmatcher, pluginargument
-from streamlink.plugin.plugin import HIGH_PRIORITY, parse_params, stream_weight
-from streamlink.stream.dash import DASHStream, DASHStreamWorker, DASHStreamWriter, DASHStreamReader
+from streamlink.plugin.plugin import (HIGH_PRIORITY,
+                                        parse_params,
+                                        stream_weight)
+from streamlink.stream.dash import (DASHStream,
+                                    DASHStreamWorker,
+                                    DASHStreamWriter,
+                                    DASHStreamReader)
 from streamlink.stream.dash.manifest import MPD, Representation
+from streamlink.stream.dash.segment import DASHSegment
 from streamlink.stream.ffmpegmux import FFMPEGMuxer
 from streamlink.utils.url import update_scheme
 from streamlink.session import Streamlink
@@ -143,7 +149,7 @@ class MPEGDASHDRM(MPEGDASH):
             key_len = len(key[-1])
             log.debug('Decryption Key %s has %s digits', key[-1], key_len)
             if key_len in (21, 22, 23, 24):
-                # key len of 21-24 may mean a base64 key was provided, so we 
+                # key len of 21-24 may mean a base64 key was provided, so we
                 # try and decode it
                 log.debug("Decryption key length is too short to be hex and looks like it might be base64, so we'll try and decode it..")
                 b64_string = key[-1]
@@ -159,9 +165,9 @@ class MPEGDASHDRM(MPEGDASH):
                 try:
                     int(key[-1], 16)
                 except ValueError as err:
-                    raise FatalPluginError(f"Expecting 128bit key in 32 hex digits, but the key contains invalid hex.")
+                    raise FatalPluginError("Expecting 128bit key in 32 hex digits, but the key contains invalid hex.")
             elif key_len != 32:
-                raise FatalPluginError(f"Expecting 128bit key in 32 hex digits.")
+                raise FatalPluginError("Expecting 128bit key in 32 hex digits.")
             return_keys.append(key[-1])
         return return_keys
 
@@ -291,7 +297,6 @@ class DASHStreamWorkerDRM(DASHStreamWorker):
                 if filtered:
                     representation = None
                 log.debug("First run. Video filter %s.", filtered)
-
 
             first = False
             if self.mpd.type == "static":
@@ -535,8 +540,8 @@ class DASHStreamWorkerDRMNonVideo(DASHStreamWorkerDRM):
             reloaded_streams = DASHStreamDRM.parse_manifest(self.session,
                                                         self.mpd.url,
                                                         next_period)
-            p, a, r = self.reader.ident
-            new_stream_rep = self.mpd.get_representation((next_period,a,r))
+            _, a, r = self.reader.ident
+            new_stream_rep = self.mpd.get_representation((next_period, a, r))
             if new_stream_rep:
                 log.debug("New %s rep found. New ident: %s", stream_type, new_stream_rep.ident)
             else:
@@ -658,7 +663,7 @@ class DASHStreamDRM(DASHStream):
         cls,
         session: Streamlink,
         url_or_manifest: str,
-        period: int | str = 0, 
+        period: int | str = 0,
         with_video_only: bool = False,
         with_audio_only: bool = False,
         **kwargs,
@@ -835,7 +840,7 @@ class DASHStreamDRM(DASHStream):
             log.debug(f"Opening DASH reader for: {rep_video.ident!r} - {rep_video.mimeType}")
             video.open()
             fds.append(video)
-          
+       
         #if rep_audio:
         #    audio = DASHStreamReaderDRM(self, rep_audio, timestamp)
         #    log.debug(f"Opening DASH reader for: {rep_audio.ident!r} - {rep_audio.mimeType}")
