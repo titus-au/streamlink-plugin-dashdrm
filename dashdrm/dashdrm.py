@@ -41,6 +41,8 @@ DASHDRM_OPTIONS = [
     "always-play-last-period",
     "video-codec-preset",
     "video-timescale",
+    "disable-multi-audio",
+    "language",
 ]
 
 @pluginmatcher(
@@ -98,7 +100,15 @@ DASHDRM_OPTIONS = [
     " the main content and filter out other content (eg ads) that has incompatible"
     " timescale which can cause issues with client/players"
 )
-
+@pluginargument(
+    "disable-multi-audio",
+    action="store_true",
+    help="Restore standard dash plugin function of single audio stream"
+)
+@pluginargument(
+    "language",
+    help="Allow filtering of audio to a specific language"
+)
 class MPEGDASHDRM(MPEGDASH):
 
     def _get_streams(self):
@@ -736,26 +746,37 @@ class DASHStreamDRM(DASHStream):
             # filter by the first language that appears
             lang = audio[0].lang if audio[0] else None
 
+        if session.options.get("language"):
+            # if we set a specific language, try and use it for filtering
+            lang = session.options.get("language")
+
         log.debug(
             f"Available languages for DASH audio streams: {', '.join(available_languages) or 'NONE'} (using: {lang or 'n/a'})",
         )
 
-        # if the language is given by the stream, filter out other languages that do not match
-        #if len(available_languages) > 1:
-        #    audio = [a for a in audio if a and (a.lang is None or a.lang == lang)]
+        if session.options.get("disable-multi-audio"):
+            # if the language is given by the stream, filter out other languages that do not match
+            if len(available_languages) > 1:
+                audio = [a for a in audio if a and (a.lang is None or a.lang == lang)]
 
         ret = []
         for vid, aud in itertools.product(video, audio):
             if not vid and not aud:
                 continue
 
-            stream = DASHStreamDRM(session, mpd, vid, audio, subtitles, **kwargs)
+            if session.options.get("disable-multi-audio"):
+                # stream with single audio
+                stream = DASHStreamDRM(session, mpd, vid, [aud], subtitles, **kwargs)
+            else:
+                # stream with all audios
+                stream = DASHStreamDRM(session, mpd, vid, audio, subtitles, **kwargs)
             stream_name = []
 
             if vid:
                 stream_name.append(f"{vid.height or vid.bandwidth_rounded:0.0f}{'p' if vid.height else 'k'}")
-            #if aud and len(audio) > 1:
-            #    stream_name.append(f"a{aud.bandwidth:0.0f}k")
+            if session.options.get("disable-multi-audio"):
+                if aud and len(audio) > 1:
+                    stream_name.append(f"a{aud.bandwidth:0.0f}k")
             ret.append(("+".join(stream_name), stream))
 
         # rename duplicate streams
@@ -766,8 +787,9 @@ class DASHStreamDRM(DASHStream):
         def sortby_bandwidth(dash_stream: DASHStreamDRM) -> float:
             if dash_stream.video_representation:
                 return dash_stream.video_representation.bandwidth
-            #if dash_stream.audio_representation:
-            #    return dash_stream.audio_representation.bandwidth
+            if session.options.get("disable-multi-audio"):
+                if dash_stream.audio_representation:
+                    return dash_stream.audio_representation.bandwidth
             return 0  # pragma: no cover
 
         ret_new = {}
@@ -809,8 +831,7 @@ class DASHStreamDRM(DASHStream):
             log.debug(f"Opening DASH reader for: {rep_video.ident!r} - {rep_video.mimeType}")
             video.open()
             fds.append(video)
-
-            
+          
         #if rep_audio:
         #    audio = DASHStreamReaderDRM(self, rep_audio, timestamp)
         #    log.debug(f"Opening DASH reader for: {rep_audio.ident!r} - {rep_audio.mimeType}")
