@@ -213,16 +213,18 @@ class FFMPEGMuxerDRM(FFMPEGMuxer):
         # Build new ffmpeg command list
         old_cmd = self._cmd.copy()
         self._cmd = []
+
         while len(old_cmd) > 0:
             cmd = old_cmd.pop(0)
-            if keys and cmd == "-i":
+            if cmd == "-i":
                 _ = old_cmd.pop(0)
-                self._cmd.extend(["-decryption_key", keys[key]])
-                key += 1
-                # If we had more streams than keys, start with the first
-                # audio key again
-                if key == len(keys):
-                    key = 1
+                if keys:
+                    self._cmd.extend(["-decryption_key", keys[key]])
+                    key += 1
+                    # If we had more streams than keys, start with the first
+                    # audio key again
+                    if key == len(keys):
+                        key = 1
                 self._cmd.extend(['-thread_queue_size', '4096'])
                 self._cmd.extend([cmd, _])
             elif subtitles and cmd == "-c:a":
