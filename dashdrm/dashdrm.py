@@ -58,7 +58,7 @@ DASHDRM_OPTIONS = [
 @pluginargument(
     "decryption-key",
     type="comma_list",
-    help="Decryption key to be passed to ffmpeg."
+    help="Decryption key(s) to be passed to ffmpeg."
 )
 @pluginargument(
     "presentation-delay",
@@ -73,25 +73,32 @@ DASHDRM_OPTIONS = [
 @pluginargument(
     "ignore-location",
     action="store_true",
-    help="Workaround to ignore Location tags that is not compliant resulting in wrong segment URLs."
+    help="Workaround to ignore Location tags that is not compliant resulting"
+    " in wrong segment URLs."
 )
 @pluginargument(
     "ignore-availability",
     action="store_true",
     help="Workaround to ignore segment availability times where server has"
-    " wrong availability segment times (eg times that are in the future)"
+    " wrong availability segment times (eg times that are in the future)."
+    " Use this with extreme caution as you are ignoring what the server is"
+    " telling you in relation to when a segment is available, thus you can"
+    " overwhelm a server with requests for segments that it already told"
+    " you is not (yet) available."
 )
 @pluginargument(
     "availability-grace",
     help="Workaround to delay getting segments even though the segment"
     " availability time has been reached, as the segments are not"
     " actually avaiable yet (resulting in 403/404 errors) possibly due to"
-    " mismatched server clock"
+    " mismatched server clock. A negative grace value can also be given,"
+    " which can cover cases where the availability times are in the future."
 )
 @pluginargument(
     "always-play-last-period",
     action="store_true",
-    help="Always jump to the last period, even when multiple new periods are found"
+    help="Always jump to the last period, even when multiple new periods are"
+    " found."
 )
 @pluginargument(
     "video-codec-preset",
@@ -104,16 +111,16 @@ DASHDRM_OPTIONS = [
     help="Use this to only display videos with the specifie timescale (eg 50000)"
     " filtering out any other. This can be used in multi-period mpds to display"
     " the main content and filter out other content (eg ads) that has incompatible"
-    " timescale which can cause issues with client/players"
+    " timescale which can cause issues with client/players. Warning: Experimental"
 )
 @pluginargument(
     "disable-multi-audio",
     action="store_true",
-    help="Restore standard dash plugin function of single audio stream"
+    help="Restore standard dash plugin function of single audio stream."
 )
 @pluginargument(
     "language",
-    help="Allow filtering of audio to a specific language"
+    help="Allow filtering of audio to a specific language code."
 )
 class MPEGDASHDRM(MPEGDASH):
 
