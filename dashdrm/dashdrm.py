@@ -792,9 +792,8 @@ class DASHStreamDRM(DASHStream):
 
             if vid:
                 stream_name.append(f"{vid.height or vid.bandwidth_rounded:0.0f}{'p' if vid.height else 'k'}")
-            if session.options.get("disable-multi-audio"):
-                if aud and len(audio) > 1:
-                    stream_name.append(f"a{aud.bandwidth:0.0f}k")
+            if aud and len(audio) > 1:
+                stream_name.append(f"a{aud.bandwidth:0.0f}k")
             ret.append(("+".join(stream_name), stream))
 
         # rename duplicate streams
