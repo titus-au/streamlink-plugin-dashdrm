@@ -665,6 +665,14 @@ class DASHStreamDRM(DASHStream):
 
     __shortname__ = "dashdrm"
 
+    # FFmpeg's decryption_key input option is not supported by these
+    # demuxers/containers.
+    FFMPEG_UNSUPPORTED_DECRYPTION_MIME_SUBTYPES = {
+        "webm",
+        "x-matroska",
+        "x-matroska-3d",
+    }
+
     @staticmethod
     def parse_mpd(session, manifest: str, mpd_params: Mapping[str, Any]) -> MPD:
         node = parse_xml(manifest, ignore_ns=True)
@@ -730,17 +738,31 @@ class DASHStreamDRM(DASHStream):
 
         # Search for suitable video and audio representations
         for aset in period_selection.adaptationSets:
-            if aset.contentProtections:
+            aset_encrypted = bool(aset.contentProtections)
+            if aset_encrypted:
                 if not session.options.get("decryption-key"):
                     raise PluginError(f"{source} is protected by DRM but no key given")
                 else:
                     log.debug(f"{source} is protected by DRM")
             for rep in aset.representations:
+                rep_encrypted = aset_encrypted or bool(rep.contentProtections)
                 if rep.contentProtections:
                     if not session.options.get("decryption-key"):
                         raise PluginError(f"{source} is protected by DRM but no key given")
                     else:
                         log.debug(f"{source} is protected by DRM")
+
+                if rep_encrypted:
+                    mime_subtype = rep.mimeType.partition("/")[2].lower()
+                    if mime_subtype in cls.FFMPEG_UNSUPPORTED_DECRYPTION_MIME_SUBTYPES:
+                        log.debug(
+                            "Ignoring encrypted representation %s (%s): "
+                            "FFmpeg does not support decryption of this container format",
+                            rep.ident,
+                            rep.mimeType,
+                        )
+                        continue
+
                 if rep.mimeType.startswith("video"):
                     video.append(rep)
                 elif rep.mimeType.startswith("audio"):  # pragma: no branch
@@ -750,12 +772,15 @@ class DASHStreamDRM(DASHStream):
                     subtitles.append(rep)
 
                 if session.options.get("store-representation-kid"):
-                    rep.kid = cls._get_representation_kid(session, rep)
-                    log.debug(
-                        "Representation %s KID=%s",
-                        rep.ident,
-                        rep.kid,
-                    )
+                    if rep_encrypted:
+                        rep.kid = cls._get_representation_kid(session, rep)
+                        log.debug(
+                            "Representation %s KID=%s",
+                            rep.ident,
+                            rep.kid,
+                        )
+                    else:
+                        rep.kid = None
 
         if not video:
             video.append(None)
@@ -969,7 +994,7 @@ class DASHStreamDRM(DASHStream):
             if cp.default_KID:
                 return cp.default_KID.replace("-", "").lower()
 
-        # Fallback to init segment
+        # Fallback to init segment (only works for MP4)
         init = cls._get_init_segment(session, rep)
 
         if init is None:
