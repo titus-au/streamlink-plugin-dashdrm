@@ -740,12 +740,14 @@ class DASHStreamDRM(DASHStream):
 
         # Search for suitable video and audio representations
         for aset in period_selection.adaptationSets:
-            if aset.contentProtections:
+            aset_encrypted = bool(aset.contentProtections)
+            if aset_encrypted:
                 if not session.options.get("decryption-key"):
                     raise PluginError(f"{source} is protected by DRM but no key given")
                 else:
                     log.debug(f"{source} is protected by DRM")
             for rep in aset.representations:
+                rep.encrypted = aset_encrypted or bool(rep.contentProtections)
                 if rep.contentProtections:
                     if not session.options.get("decryption-key"):
                         raise PluginError(f"{source} is protected by DRM but no key given")
@@ -760,12 +762,15 @@ class DASHStreamDRM(DASHStream):
                     subtitles.append(rep)
 
                 if session.options.get("store-representation-kid"):
-                    rep.kid = cls._resolve_representation_kid(session, rep, init_cache)
-                    log.debug(
-                        "Representation %s KID=%s",
-                        rep.ident,
-                        rep.kid,
-                    )
+                    if rep.encrypted:
+                        rep.kid = cls._resolve_representation_kid(session, rep, init_cache)
+                        log.debug(
+                            "Representation %s: KID=%s",
+                            rep.ident,
+                            rep.kid,
+                        )
+                    else:
+                        rep.kid = None
 
         if not video:
             video.append(None)
@@ -903,15 +908,24 @@ class DASHStreamDRM(DASHStream):
             if not representation:
                 log.debug("Unable to find representation, falling back to positional key assignment")
                 return positional_match()
+            encrypted = getattr(representation, "encrypted", False)
             kid = getattr(representation, "kid", None)
-            if kid:
+
+            if not encrypted:
                 log.debug(
-                    "Representation %s KID=%s",
+                    "Representation %s: key=None",
                     representation.ident,
-                    kid,
                 )
-            else:
-                log.debug("Representation %s missing kid attr", representation.ident)
+                rtn_keys.append(None)
+                continue
+
+            if kid is None:
+                log.debug(
+                    "Representation %s is encrypted but has no KID; falling back to positional key assignment",
+                    representation.ident,
+                )
+                return positional_match()
+
             key = kid_lookup.get(kid)
             if key is None:
                 log.debug(
@@ -920,6 +934,11 @@ class DASHStreamDRM(DASHStream):
                 )
                 return positional_match()
 
+            log.debug(
+                "Representation %s: key=%s",
+                representation.ident,
+                kid,
+            )
             rtn_keys.append(key)
 
         log.debug("Successfully matched all representations by KID")
