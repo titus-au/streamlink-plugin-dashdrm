@@ -37,6 +37,14 @@ rep_sync_queue = queue.Queue()
 
 log = getLogger(__name__)
 
+WIDEVINE_SYSTEM_ID = bytes.fromhex("edef8ba979d64acea3c827dcd51d21ed")
+ZERO_KID = "00000000000000000000000000000000"
+
+InitCache = dict[
+    tuple[str, tuple[int, int | None] | None],
+    bytes,
+]
+
 DASHDRM_OPTIONS = [
     "decryption-key",
     "presentation-delay",
@@ -697,6 +705,8 @@ class DASHStreamDRM(DASHStream):
         :param kwargs: Additional keyword arguments passed to :meth:`requests.Session.request`
         """
 
+        init_cache: InitCache = {}
+
         manifest, mpd_params = cls.fetch_manifest(session, url_or_manifest, **kwargs)
 
         try:
@@ -730,12 +740,14 @@ class DASHStreamDRM(DASHStream):
 
         # Search for suitable video and audio representations
         for aset in period_selection.adaptationSets:
-            if aset.contentProtections:
+            aset_encrypted = bool(aset.contentProtections)
+            if aset_encrypted:
                 if not session.options.get("decryption-key"):
                     raise PluginError(f"{source} is protected by DRM but no key given")
                 else:
                     log.debug(f"{source} is protected by DRM")
             for rep in aset.representations:
+                rep.encrypted = aset_encrypted or bool(rep.contentProtections)
                 if rep.contentProtections:
                     if not session.options.get("decryption-key"):
                         raise PluginError(f"{source} is protected by DRM but no key given")
@@ -750,12 +762,15 @@ class DASHStreamDRM(DASHStream):
                     subtitles.append(rep)
 
                 if session.options.get("store-representation-kid"):
-                    rep.kid = cls._get_representation_kid(session, rep)
-                    log.debug(
-                        "Representation %s KID=%s",
-                        rep.ident,
-                        rep.kid,
-                    )
+                    if rep.encrypted:
+                        rep.kid = cls._resolve_representation_kid(session, rep, init_cache)
+                        log.debug(
+                            "Representation %s: KID=%s",
+                            rep.ident,
+                            rep.kid,
+                        )
+                    else:
+                        rep.kid = None
 
         if not video:
             video.append(None)
@@ -893,15 +908,24 @@ class DASHStreamDRM(DASHStream):
             if not representation:
                 log.debug("Unable to find representation, falling back to positional key assignment")
                 return positional_match()
+            encrypted = getattr(representation, "encrypted", False)
             kid = getattr(representation, "kid", None)
-            if kid:
+
+            if not encrypted:
                 log.debug(
-                    "Representation %s KID=%s",
+                    "Representation %s: key=None",
                     representation.ident,
-                    kid,
                 )
-            else:
-                log.debug("Representation %s missing kid attr", representation.ident)
+                rtn_keys.append(None)
+                continue
+
+            if kid is None:
+                log.debug(
+                    "Representation %s is encrypted but has no KID; falling back to positional key assignment",
+                    representation.ident,
+                )
+                return positional_match()
+
             key = kid_lookup.get(kid)
             if key is None:
                 log.debug(
@@ -910,56 +934,22 @@ class DASHStreamDRM(DASHStream):
                 )
                 return positional_match()
 
+            log.debug(
+                "Representation %s: key=%s",
+                representation.ident,
+                kid,
+            )
             rtn_keys.append(key)
 
         log.debug("Successfully matched all representations by KID")
         return rtn_keys
 
     @staticmethod
-    def _get_init_segment(session: Streamlink, rep: Representation) -> bytes | None:
-        segments = rep.segments(init=True)
-
-        try:
-            segment = next(segments)
-        except StopIteration:
-            return None
-
-        if not segment.init:
-            return None
-
-        request = session.http.get(segment.uri)
-
-        if segment.byterange:
-            start, length = segment.byterange
-            end = start + length - 1 if length else ""
-            request = session.http.get(
-                segment.uri,
-                headers={"Range": f"bytes={start}-{end}"},
-            )
-
-        return request.content
-
-    @staticmethod
-    def _extract_kid(data: bytes) -> str | None:
-        tenc = b"tenc"
-
-        index = data.find(tenc)
-
-        if index == -1:
-            return None
-
-        if index + 28 > len(data):
-            return None
-
-        return data[index + 12:index + 28].hex()
-
-    @classmethod
-    def _get_representation_kid(
-            cls,
+    def _resolve_representation_kid(
             session: Streamlink,
             rep: Representation,
+            init_cache: InitCache,
     ) -> str | None:
-
         # Get from MPD
         for cp in rep.contentProtections:
             if cp.default_KID:
@@ -970,12 +960,122 @@ class DASHStreamDRM(DASHStream):
                 return cp.default_KID.replace("-", "").lower()
 
         # Fallback to init segment
-        init = cls._get_init_segment(session, rep)
+        init = DASHStreamDRM._fetch_init_segment(session, rep, init_cache)
 
         if init is None:
             return None
 
-        return cls._extract_kid(init)
+        _, kid = DASHStreamDRM._parse_init_segment(init)
+        return kid
+
+    @staticmethod
+    def _fetch_init_segment(
+            session: Streamlink,
+            rep: Representation,
+            init_cache: InitCache,
+    ) -> bytes | None:
+        segments = rep.segments(init=True)
+
+        try:
+            segment = next(segments)
+        except StopIteration:
+            return None
+
+        if not segment.init:
+            return None
+
+        cache_key = (segment.uri, segment.byterange)
+        if cache_key in init_cache:
+            return init_cache[cache_key]
+
+        request_kwargs = {}
+        if segment.byterange:
+            start, length = segment.byterange
+            end = start + length - 1 if length else ""
+            request_kwargs["headers"] = {
+                "Range": f"bytes={start}-{end}"
+            }
+
+        request = session.http.get(segment.uri, **request_kwargs)
+
+        content = request.content
+        init_cache[cache_key] = content
+        return content
+
+    @staticmethod
+    def _parse_init_segment(data: bytes) -> tuple[str | None, str | None]:
+        scheme = None
+        kid = None
+
+        for sample_entry in (b"encv", b"enca", b"enct", b"encs"):
+
+            entry = data.find(sample_entry)
+
+            if entry == -1:
+                continue
+
+            if entry < 4:
+                continue
+
+            box_start = entry - 4
+            box_size = int.from_bytes(
+                data[box_start:box_start + 4],
+                "big",
+            )
+            if box_size < 8:
+                continue
+            box_end = box_start + box_size
+            if box_end > len(data):
+                continue
+            box = data[box_start:box_end]
+
+            # Scheme
+            schm = box.find(b"schm")
+
+            if schm != -1 and schm + 12 <= len(box):
+                scheme = box[schm + 8:schm + 12].decode("ascii", errors="ignore")
+                log.debug("Protection scheme=%s", scheme)
+
+            # KID
+            tenc = box.find(b"tenc")
+
+            if tenc != -1 and tenc + 28 <= len(box):
+                kid = box[tenc + 12:tenc + 28].hex()
+
+            break
+
+        if kid == ZERO_KID:
+            log.debug("Zero KID found in tenc, attempting PSSH fallback")
+            kid = DASHStreamDRM._extract_kid_from_pssh_box(data)
+
+        return scheme, kid
+
+    @staticmethod
+    def _extract_kid_from_pssh_box(data: bytes) -> str | None:
+        pssh = data.find(b"pssh")
+
+        if pssh == -1:
+            return None
+
+        if pssh + 32 > len(data):
+            return None
+
+        system_id = data[pssh + 12:pssh + 28]
+
+        if system_id != WIDEVINE_SYSTEM_ID:
+            return None
+
+        data_size = int.from_bytes(
+            data[pssh + 28:pssh + 32],
+            "big",
+        )
+
+        payload = data[pssh + 32:pssh + 32 + data_size]
+
+        if len(payload) < 18:
+            return None
+
+        return payload[2:18].hex()
 
     def open(self):
         video, audio, audio1 = None, None, None
